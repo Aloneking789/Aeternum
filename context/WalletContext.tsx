@@ -1,9 +1,22 @@
+import { MOCK_INVESTMENTS, MOCK_LISTINGS, MOCK_USER } from '@/mocks/data';
+import { useWalletStore, WalletType } from '@/stores/wallet-store';
+import type { Investment, Listing, UserProfile } from '@/types';
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useEffect } from 'react';
-import { MOCK_USER, MOCK_INVESTMENTS, MOCK_LISTINGS, generateWalletAddress } from '@/mocks/data';
-import type { UserProfile, Investment, Listing } from '@/types';
+import {
+  transact,
+  Web3MobileWallet,
+} from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { PublicKey } from '@solana/web3.js';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Buffer } from 'buffer';
+import { useEffect, useState } from 'react';
+
+const APP_IDENTITY = {
+  name: 'Aeternum',
+  uri: 'https://aeturnum.app',
+  icon: 'favicon.ico',
+};
 
 const STORAGE_KEYS = {
   WALLET: 'aeturnum_wallet',
@@ -20,13 +33,22 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
   const [notifications, setNotifications] = useState(true);
   const [network, setNetwork] = useState<'devnet' | 'mainnet'>('devnet');
 
+  // Zustand persisted store
+  const walletType = useWalletStore((s) => s.walletType);
+  const publicKeyBase58 = useWalletStore((s) => s.publicKeyBase58);
+
   const sessionQuery = useQuery({
     queryKey: ['wallet_session'],
     queryFn: async () => {
       const stored = await AsyncStorage.getItem(STORAGE_KEYS.WALLET);
       if (stored) {
         const data = JSON.parse(stored);
-        return data as { address: string; setupComplete: boolean };
+        return data as {
+          address: string;
+          publicKey?: string;
+          walletType?: string;
+          setupComplete: boolean;
+        };
       }
       return null;
     },
@@ -37,6 +59,16 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
       setIsConnected(true);
       setWalletAddress(sessionQuery.data.address);
       setIsSetupComplete(sessionQuery.data.setupComplete);
+      // Also sync into zustand if it was cleared (e.g. after an app reinstall
+      // where AsyncStorage persisted but Zustand storage did not)
+      const store = useWalletStore.getState();
+      if (sessionQuery.data.publicKey && !store.publicKeyBase58) {
+        store.setWalletData({
+          walletType: (sessionQuery.data.walletType ?? null) as WalletType,
+          publicKeyBase58: sessionQuery.data.publicKey,
+          authToken: store.authToken ?? '',
+        });
+      }
       console.log('[WalletContext] Session restored:', sessionQuery.data.address);
     }
   }, [sessionQuery.data]);
@@ -52,15 +84,43 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
   });
 
   const connectMutation = useMutation({
-    mutationFn: async (walletType: string) => {
-      console.log('[WalletContext] Connecting wallet:', walletType);
-      await new Promise(r => setTimeout(r, 1500));
-      const address = generateWalletAddress();
-      const shortAddress = `${address.slice(0, 4)}...${address.slice(-4)}`;
-      await AsyncStorage.setItem(STORAGE_KEYS.WALLET, JSON.stringify({
-        address: shortAddress,
-        setupComplete: false,
-      }));
+    mutationFn: async (selectedWalletType: string) => {
+      console.log('[WalletContext] Connecting wallet:', selectedWalletType);
+      const { isDevnet } = useWalletStore.getState();
+      const cluster = isDevnet ? 'devnet' : 'mainnet-beta';
+
+      const authResult = await transact(async (wallet: Web3MobileWallet) => {
+        return wallet.authorize({
+          chain: `solana:${cluster}`,
+          identity: APP_IDENTITY,
+        });
+      });
+
+      // Decode the base64 address into a proper base-58 public key
+      const pubkey = new PublicKey(
+        Buffer.from(authResult.accounts[0].address, 'base64')
+      );
+      const pubkeyBase58 = pubkey.toBase58();
+      const shortAddress = `${pubkeyBase58.slice(0, 4)}...${pubkeyBase58.slice(-4)}`;
+
+      // Persist full wallet data in Zustand (AsyncStorage-backed)
+      useWalletStore.getState().setWalletData({
+        walletType: selectedWalletType as WalletType,
+        publicKeyBase58: pubkeyBase58,
+        authToken: authResult.auth_token ?? '',
+      });
+
+      // Also keep a lightweight session key for the session query
+      await AsyncStorage.setItem(
+        STORAGE_KEYS.WALLET,
+        JSON.stringify({
+          address: shortAddress,
+          publicKey: pubkeyBase58,
+          walletType: selectedWalletType,
+          setupComplete: false,
+        }),
+      );
+
       return shortAddress;
     },
     onSuccess: (address) => {
@@ -80,11 +140,18 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
         ...data,
         walletAddress: walletAddress ?? '',
       };
+      const { publicKeyBase58: pk, walletType: wt } = useWalletStore.getState();
       await AsyncStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(profile));
-      await AsyncStorage.setItem(STORAGE_KEYS.WALLET, JSON.stringify({
-        address: walletAddress,
-        setupComplete: true,
-      }));
+      await AsyncStorage.setItem(
+        STORAGE_KEYS.WALLET,
+        JSON.stringify({
+          address: walletAddress,
+          publicKey: pk,
+          walletType: wt,
+          setupComplete: true,
+        }),
+      );
+      useWalletStore.getState().setSetupComplete(true);
       return profile;
     },
     onSuccess: () => {
@@ -99,6 +166,7 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
       console.log('[WalletContext] Disconnecting wallet');
       await AsyncStorage.removeItem(STORAGE_KEYS.WALLET);
       await AsyncStorage.removeItem(STORAGE_KEYS.PROFILE);
+      useWalletStore.getState().clearWallet();
     },
     onSuccess: () => {
       setIsConnected(false);
@@ -136,6 +204,8 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
     isConnected,
     isLoading: sessionQuery.isLoading,
     walletAddress,
+    publicKeyBase58,
+    walletType,
     isSetupComplete,
     profile,
     investments,
