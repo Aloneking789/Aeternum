@@ -1,17 +1,28 @@
-import React, { useState, useRef } from 'react';
-import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Image, Dimensions, Animated,
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import {
-  ArrowLeft, MapPin, TrendingUp, Users, FileText,
-  ChevronLeft, ChevronRight, ExternalLink, Shield,
-} from 'lucide-react-native';
-import { MOCK_PROPERTIES, MOCK_ACTIVITY, formatCurrency } from '@/mocks/data';
 import Colors from '@/constants/colors';
+import { MOCK_ACTIVITY, formatCurrency } from '@/mocks/data';
+import { fetchPropertyById } from '@/services/property';
+import type { Property } from '@/types';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import {
+  ArrowLeft,
+  ChevronLeft, ChevronRight, ExternalLink,
+  MapPin,
+  Shield,
+  TrendingUp
+} from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 
@@ -31,7 +42,70 @@ export default function PropertyDetailScreen() {
   const [imageIndex, setImageIndex] = useState(0);
   const [activeTab, setActiveTab] = useState('Overview');
 
-  const property = MOCK_PROPERTIES.find(p => p.id === id);
+  const [property, setProperty] = useState<Property | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadProperty = async () => {
+      if (!id) {
+        if (mounted) {
+          setLoadError('Property id is missing');
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      try {
+        setIsLoading(true);
+        setLoadError('');
+        const data = await fetchPropertyById(id);
+        if (mounted) {
+          setProperty(data);
+        }
+      } catch (error) {
+        if (mounted) {
+          setLoadError(error instanceof Error ? error.message : 'Unable to fetch property');
+        }
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadProperty();
+
+    return () => {
+      mounted = false;
+    };
+  }, [id]);
+
+  useEffect(() => {
+    setImageIndex(0);
+  }, [property?.id]);
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+        <ActivityIndicator color={Colors.gold} />
+        <Text style={styles.loadingText}>Loading property...</Text>
+      </View>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+        <Text style={styles.errorText}>{loadError}</Text>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Text style={styles.backLink}>Go back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (!property) {
     return (
@@ -48,14 +122,20 @@ export default function PropertyDetailScreen() {
     - (property.monthlyRental * property.managementFeePercent / 100)
     - property.insuranceCost;
 
-  const availPct = ((property.availableShares / property.totalShares) * 100).toFixed(1);
+  const availPct = property.totalShares > 0
+    ? ((property.availableShares / property.totalShares) * 100).toFixed(1)
+    : '0.0';
+
+  const imageList = property.images.length > 0
+    ? property.images
+    : [property.image].filter(Boolean);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <LinearGradient colors={['#0D0E1A', '#08090D']} style={StyleSheet.absoluteFill} />
 
       <View style={styles.imgContainer}>
-        <Image source={{ uri: property.images[imageIndex] }} style={styles.heroImg} resizeMode="cover" />
+        <Image source={{ uri: imageList[imageIndex] }} style={styles.heroImg} resizeMode="cover" />
         <LinearGradient
           colors={['rgba(8,9,13,0.5)', 'transparent', 'rgba(8,9,13,0.9)']}
           style={StyleSheet.absoluteFill}
@@ -65,7 +145,7 @@ export default function PropertyDetailScreen() {
         </TouchableOpacity>
 
         <View style={styles.imgDots}>
-          {property.images.map((_, i) => (
+          {imageList.map((_, i) => (
             <TouchableOpacity
               key={i}
               onPress={() => setImageIndex(i)}
@@ -79,7 +159,7 @@ export default function PropertyDetailScreen() {
             <ChevronLeft size={18} color={Colors.text} />
           </TouchableOpacity>
         )}
-        {imageIndex < property.images.length - 1 && (
+        {imageIndex < imageList.length - 1 && (
           <TouchableOpacity style={[styles.imgArrow, { right: 12 }]} onPress={() => setImageIndex(i => i + 1)}>
             <ChevronRight size={18} color={Colors.text} />
           </TouchableOpacity>
@@ -293,6 +373,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   center: { alignItems: 'center', justifyContent: 'center' },
   notFound: { fontSize: 18, color: Colors.text, marginBottom: 12 },
+  loadingText: { fontSize: 13, color: Colors.textMuted, marginTop: 10 },
+  errorText: { fontSize: 13, color: Colors.red, marginBottom: 12, textAlign: 'center', paddingHorizontal: 20 },
   backLink: { fontSize: 14, color: Colors.gold },
   imgContainer: { width, height: 260, position: 'relative' },
   heroImg: { width: '100%', height: '100%' },

@@ -1,19 +1,26 @@
-import React from 'react';
-import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Image,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Settings, Copy, Share2, Edit2, TrendingUp, Building2, Zap, Award } from 'lucide-react-native';
+import Colors from '@/constants/colors';
 import { useWallet } from '@/context/WalletContext';
 import { formatCurrency } from '@/mocks/data';
-import Colors from '@/constants/colors';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { Award, Building2, Copy, Edit2, Settings, Share2, TrendingUp, Zap } from 'lucide-react-native';
+import React from 'react';
+import {
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function ProfileScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { profile, walletAddress, totalPortfolioValue, totalInvested, totalYieldEarned, investments, listings } = useWallet();
+  const displayWalletAddress = profile.walletAddress || walletAddress || '—';
+  const displayReferralCode = profile.referralCode || 'N/A';
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -60,7 +67,7 @@ export default function ProfileScreen() {
 
           <View style={styles.walletChip}>
             <View style={styles.walletDot} />
-            <Text style={styles.walletText}>{walletAddress ?? '—'}</Text>
+            <Text style={styles.walletText}>{displayWalletAddress}</Text>
             <TouchableOpacity>
               <Copy size={12} color={Colors.textMuted} />
             </TouchableOpacity>
@@ -110,7 +117,7 @@ export default function ProfileScreen() {
               end={{ x: 1, y: 1 }}
             />
             <Text style={styles.referralLabel}>Your Referral Code</Text>
-            <Text style={styles.referralCode}>{profile.referralCode}</Text>
+            <Text style={styles.referralCode}>{displayReferralCode}</Text>
             <Text style={styles.referralDesc}>
               Earn 0.5% of every investment made by users you refer
             </Text>
@@ -124,7 +131,7 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account</Text>
           {[
-            { label: 'Edit Profile', icon: Edit2, onPress: () => {} },
+            { label: 'Edit Profile', icon: Edit2, onPress: () => { } },
             { label: 'Settings', icon: Settings, onPress: () => router.push('/settings' as any) },
           ].map((item) => (
             <TouchableOpacity

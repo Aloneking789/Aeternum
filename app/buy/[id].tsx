@@ -1,52 +1,381 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, ActivityIndicator,
-} from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Minus, Plus, Wallet, Zap, Shield, Check } from 'lucide-react-native';
-import { MOCK_PROPERTIES, formatCurrency } from '@/mocks/data';
 import Colors from '@/constants/colors';
+import { useWallet } from '@/context/WalletContext';
+import { formatCurrency } from '@/mocks/data';
+import { fetchPropertyById } from '@/services/property';
+import {
+  confirmTransaction,
+  fetchPropertyQuote,
+  initiateBuyTransaction,
+  type PropertyQuote,
+} from '@/services/transactions';
+import { useWalletStore } from '@/stores/wallet-store';
+import {
+  transact,
+  Web3MobileWallet,
+} from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { clusterApiUrl, Connection, VersionedTransaction } from '@solana/web3.js';
+import bs58 from 'bs58';
+import { Buffer } from 'buffer';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { ArrowLeft, Check, Minus, Plus, Shield, Wallet, Zap } from 'lucide-react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator, Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput, TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const PLATFORM_FEE = 0.015;
 const GAS_FEE = 0.000005;
-const MOCK_USDC_BALANCE = 25000;
+
+const APP_IDENTITY = {
+  name: 'Aeternum',
+  uri: 'https://aeturnum.app',
+  icon: 'favicon.ico',
+};
+
+async function sendAndConfirmWithFallback(
+  serializedTx: Uint8Array,
+  isDevnet: boolean,
+): Promise<{ signature: string; endpoint: string }> {
+  const devnetFallbacks = (process.env.EXPO_PUBLIC_SOLANA_DEVNET_RPC_FALLBACKS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const mainnetFallbacks = (process.env.EXPO_PUBLIC_SOLANA_MAINNET_RPC_FALLBACKS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const endpoints = isDevnet
+    ? [
+      process.env.EXPO_PUBLIC_SOLANA_DEVNET_RPC_URL?.trim(),
+      ...devnetFallbacks,
+      clusterApiUrl('devnet'),
+      'https://api.devnet.solana.com',
+    ]
+    : [
+      process.env.EXPO_PUBLIC_SOLANA_MAINNET_RPC_URL?.trim(),
+      ...mainnetFallbacks,
+      clusterApiUrl('mainnet-beta'),
+      'https://api.mainnet-beta.solana.com',
+    ];
+
+  const uniqueEndpoints = Array.from(new Set(endpoints.filter((endpoint): endpoint is string => !!endpoint)));
+  const failures: string[] = [];
+
+  for (const endpoint of uniqueEndpoints) {
+    try {
+      const connection = new Connection(endpoint, 'confirmed');
+      const signature = await connection.sendRawTransaction(serializedTx, {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
+
+      await connection.confirmTransaction(signature, 'confirmed');
+      return { signature, endpoint };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`${endpoint}: ${message}`);
+      console.error('[Buy] RPC endpoint failed', { endpoint, error: message });
+    }
+  }
+
+  throw new Error(`All RPC endpoints failed. ${failures.join(' | ')}`);
+}
 
 export default function BuySharesScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { publicKeyBase58, isConnected } = useWallet();
+  const isDevnet = useWalletStore((s) => s.isDevnet);
+
+  const [property, setProperty] = useState<Awaited<ReturnType<typeof fetchPropertyById>>>(null);
+  const [isLoadingProperty, setIsLoadingProperty] = useState(true);
+  const [propertyLoadError, setPropertyLoadError] = useState('');
+
   const [shares, setShares] = useState('1');
+  const [quote, setQuote] = useState<PropertyQuote | null>(null);
+  const [isLoadingQuote, setIsLoadingQuote] = useState(false);
+  const [quoteError, setQuoteError] = useState('');
   const [isConfirming, setIsConfirming] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [transactionError, setTransactionError] = useState('');
 
-  const property = MOCK_PROPERTIES.find(p => p.id === id);
-  if (!property) return null;
+  useEffect(() => {
+    let mounted = true;
+
+    const loadProperty = async () => {
+      try {
+        setIsLoadingProperty(true);
+        setPropertyLoadError('');
+        const data = await fetchPropertyById(id);
+        if (mounted) {
+          setProperty(data);
+          if (!data) {
+            setPropertyLoadError('Property not found');
+          }
+        }
+      } catch (error) {
+        if (mounted) {
+          setPropertyLoadError(error instanceof Error ? error.message : 'Unable to load property');
+        }
+      } finally {
+        if (mounted) {
+          setIsLoadingProperty(false);
+        }
+      }
+    };
+
+    if (id) {
+      loadProperty();
+    }
+
+    return () => {
+      mounted = false;
+    };
+  }, [id]);
 
   const sharesNum = Math.max(0, parseInt(shares) || 0);
-  const totalCost = sharesNum * property.pricePerShare;
-  const platformFee = totalCost * PLATFORM_FEE;
-  const annualYield = totalCost * (property.yieldPercent / 100);
-  const ownershipPct = (sharesNum / property.totalShares * 100).toFixed(4);
-  const totalWithFee = totalCost + platformFee;
-  const canAfford = MOCK_USDC_BALANCE >= totalWithFee;
-  const canBuy = sharesNum > 0 && sharesNum <= property.availableShares && canAfford;
+  const availableShares = quote?.availableShares ?? property?.availableShares ?? 0;
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadQuote = async () => {
+      if (!property || sharesNum <= 0) {
+        setQuote(null);
+        setQuoteError('');
+        return;
+      }
+
+      try {
+        setIsLoadingQuote(true);
+        setQuoteError('');
+        console.log('[Buy] quote request', { propertyId: property.id, shares: sharesNum });
+        const data = await fetchPropertyQuote(property.id, sharesNum);
+        if (mounted) {
+          setQuote(data);
+          console.log('[Buy] quote response', data);
+        }
+      } catch (error) {
+        console.error('[Buy] quote error', {
+          propertyId: property.id,
+          shares: sharesNum,
+          error: error instanceof Error ? error.message : error,
+        });
+        if (mounted) {
+          setQuoteError(error instanceof Error ? error.message : 'Unable to fetch quote');
+          setQuote(null);
+        }
+      } finally {
+        if (mounted) {
+          setIsLoadingQuote(false);
+        }
+      }
+    };
+
+    loadQuote();
+
+    return () => {
+      mounted = false;
+    };
+  }, [property, sharesNum]);
+
+  const totalCost = quote?.usdcRequired ?? sharesNum * (property?.pricePerShare ?? 0);
+  const platformFee = quote?.platformFee ?? 0;
+  const platformFeeRate = quote?.platformFeeRate ?? 0;
+  const annualYield = totalCost * ((property?.yieldPercent ?? 0) / 100);
+  const ownershipPct = property
+    ? ((sharesNum / Math.max(1, property.totalShares)) * 100).toFixed(4)
+    : '0.0000';
+
+  const canBuy = useMemo(() => {
+    if (!property || !publicKeyBase58 || !isConnected) return false;
+    if (!isDevnet) return false;
+    if (sharesNum <= 0 || sharesNum > availableShares) return false;
+    if (isLoadingQuote || !!quoteError) return false;
+    return true;
+  }, [property, publicKeyBase58, isConnected, isDevnet, sharesNum, availableShares, isLoadingQuote, quoteError]);
 
   const adjust = (delta: number) => {
-    const n = Math.max(1, Math.min(property.availableShares, (parseInt(shares) || 0) + delta));
+    const n = Math.max(1, Math.min(availableShares, (parseInt(shares) || 0) + delta));
     setShares(String(n));
   };
 
   const handleConfirm = async () => {
-    if (!canBuy) return;
-    setIsConfirming(true);
-    await new Promise(r => setTimeout(r, 2500));
-    setIsConfirming(false);
-    setIsSuccess(true);
-    setTimeout(() => router.replace('/(tabs)/investments' as any), 2000);
+    if (!canBuy || !property || !publicKeyBase58) return;
+
+    let stage = 'init';
+
+    try {
+      setIsConfirming(true);
+      setTransactionError('');
+
+      console.log('[Buy] initiate request', {
+        propertyId: property.id,
+        shares: sharesNum,
+        walletAddress: publicKeyBase58,
+      });
+
+      stage = 'initiate-buy';
+      const initiated = await initiateBuyTransaction({
+        propertyId: property.id,
+        shares: sharesNum,
+        walletAddress: publicKeyBase58,
+      });
+
+      console.log('[Buy] initiate response', {
+        escrowPDA: initiated.escrowPDA,
+        usdcAmount: initiated.usdcAmount,
+        platformFee: initiated.platformFee,
+        unsignedTxLength: initiated.unsignedTx?.length ?? 0,
+      });
+
+      stage = 'wallet-sign-and-send';
+      const signature = await transact(async (wallet: Web3MobileWallet) => {
+        const walletState = useWalletStore.getState();
+        const chain = walletState.isDevnet ? 'solana:devnet' : 'solana:mainnet-beta';
+
+        const authResult = await wallet.authorize({
+          chain,
+          identity: APP_IDENTITY,
+          auth_token: walletState.authToken ?? undefined,
+        });
+
+        if (walletState.walletType && walletState.publicKeyBase58) {
+          walletState.setWalletData({
+            walletType: walletState.walletType,
+            publicKeyBase58: walletState.publicKeyBase58,
+            authToken: authResult.auth_token ?? walletState.authToken ?? '',
+          });
+        }
+
+        const unsignedTxBytes = Buffer.from(initiated.unsignedTx, 'base64');
+        const unsignedTx = VersionedTransaction.deserialize(unsignedTxBytes);
+
+        // Prefer wallet-native submit path to avoid device RPC reachability issues.
+        const maybeSignAndSend = (
+          wallet as unknown as {
+            signAndSendTransactions?: (args: { transactions: VersionedTransaction[] }) => Promise<{ signatures: Array<string | Uint8Array> }>;
+          }
+        ).signAndSendTransactions;
+
+        if (typeof maybeSignAndSend === 'function') {
+          const walletSendResult = await maybeSignAndSend({ transactions: [unsignedTx] });
+          const walletSig = Array.isArray(walletSendResult)
+            ? walletSendResult[0]
+            : walletSendResult?.signatures?.[0];
+
+          if (typeof walletSig === 'string' && walletSig.length > 0) {
+            console.log('[Buy] tx sent via wallet-native submit', { txSignature: walletSig });
+            return walletSig;
+          }
+
+          if (walletSig instanceof Uint8Array && walletSig.length > 0) {
+            const derivedSig = bs58.encode(walletSig);
+            console.log('[Buy] tx sent via wallet-native submit (Uint8Array signature)', { txSignature: derivedSig });
+            return derivedSig;
+          }
+
+          // Some wallets submit successfully but don't return signatures in the adapter response.
+          const txSignatureBytes = unsignedTx.signatures?.[0];
+          if (txSignatureBytes instanceof Uint8Array && txSignatureBytes.some((b) => b !== 0)) {
+            const derivedSig = bs58.encode(txSignatureBytes);
+            console.log('[Buy] tx sent via wallet-native submit (derived from tx signature bytes)', { txSignature: derivedSig });
+            return derivedSig;
+          }
+
+          console.log('[Buy] wallet-native submit result missing signature; not falling back to app RPC to avoid duplicate send', {
+            signatureType: typeof walletSig,
+            rawResult: walletSendResult,
+          });
+
+          throw new Error(
+            'Wallet submitted transaction but did not return a signature. Check wallet history for the tx signature and confirm manually.',
+          );
+        }
+
+        const signedTxs = await wallet.signTransactions({ transactions: [unsignedTx] });
+
+        if (!signedTxs?.[0]) {
+          throw new Error('Wallet returned no signed transaction');
+        }
+
+        const result = await sendAndConfirmWithFallback(
+          signedTxs[0].serialize(),
+          walletState.isDevnet,
+        );
+
+        console.log('[Buy] tx sent+confirmed via app RPC', { txSignature: result.signature, endpoint: result.endpoint });
+        return result.signature;
+      });
+
+      stage = 'confirm-buy';
+      const confirmPayload = {
+        txSignature: signature,
+        propertyId: property.id,
+        shares: sharesNum,
+        side: 'buy',
+      } as const;
+
+      console.log('[Buy] confirm request', confirmPayload);
+      console.log('[Buy] backend confirm payload JSON', JSON.stringify(confirmPayload));
+
+      const confirmResponse = await confirmTransaction(confirmPayload);
+
+      console.log('[Buy] confirm success', { txSignature: signature, response: confirmResponse });
+      console.log('[Buy] backend confirm response JSON', JSON.stringify(confirmResponse));
+
+      setIsSuccess(true);
+      setTimeout(() => router.replace('/(tabs)/investments' as any), 2000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Buy transaction failed';
+      const rpcBlocked = stage === 'wallet-sign-and-send' && message.includes('All RPC endpoints failed');
+      const finalMessage = rpcBlocked
+        ? `${message}\n\nYour device cannot reach Solana RPC. Set EXPO_PUBLIC_SOLANA_DEVNET_RPC_URL (or EXPO_PUBLIC_SOLANA_DEVNET_RPC_FALLBACKS) to a reachable endpoint, or disable VPN/Private DNS.`
+        : message;
+
+      console.error('[Buy] transaction error', {
+        stage,
+        propertyId: property.id,
+        shares: sharesNum,
+        walletAddress: publicKeyBase58,
+        error: finalMessage,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      const stagedMessage = `[${stage}] ${finalMessage}`;
+      setTransactionError(stagedMessage);
+      Alert.alert('Transaction failed', stagedMessage);
+    } finally {
+      setIsConfirming(false);
+    }
   };
+
+  if (isLoadingProperty) {
+    return (
+      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+        <ActivityIndicator color={Colors.gold} />
+      </View>
+    );
+  }
+
+  if (!property) {
+    return (
+      <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
+        <Text style={styles.notFound}>{propertyLoadError || 'Property not found'}</Text>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Text style={styles.backLink}>Go back</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (isSuccess) {
     return (
@@ -106,13 +435,13 @@ export default function BuySharesScreen() {
               <Wallet size={18} color={Colors.gold} />
             </View>
             <View>
-              <Text style={styles.walletLabel}>USDC Balance</Text>
-              <Text style={styles.walletBalance}>{formatCurrency(MOCK_USDC_BALANCE)}</Text>
+              <Text style={styles.walletLabel}>Connected Wallet</Text>
+              <Text style={styles.walletBalance}>{publicKeyBase58 ? `${publicKeyBase58.slice(0, 4)}...${publicKeyBase58.slice(-4)}` : 'Not connected'}</Text>
             </View>
           </View>
           <View style={[styles.networkBadge, { backgroundColor: Colors.greenGlow }]}>
             <View style={styles.greenDot} />
-            <Text style={styles.networkText}>Devnet</Text>
+            <Text style={styles.networkText}>{isDevnet ? 'Devnet' : 'Mainnet'}</Text>
           </View>
         </View>
 
@@ -136,13 +465,13 @@ export default function BuySharesScreen() {
             <TouchableOpacity
               style={[styles.adjBtn, sharesNum >= property.availableShares && styles.adjBtnDisabled]}
               onPress={() => adjust(1)}
-              disabled={sharesNum >= property.availableShares}
+              disabled={sharesNum >= availableShares}
             >
-              <Plus size={18} color={sharesNum >= property.availableShares ? Colors.textDisabled : Colors.text} />
+              <Plus size={18} color={sharesNum >= availableShares ? Colors.textDisabled : Colors.text} />
             </TouchableOpacity>
           </View>
           <Text style={styles.sharesAvail}>
-            Max available: {property.availableShares.toLocaleString()} shares
+            Max available: {availableShares.toLocaleString()} shares
           </Text>
         </View>
 
@@ -150,9 +479,9 @@ export default function BuySharesScreen() {
           <Text style={styles.calcTitle}>Order Summary</Text>
           {[
             { label: 'Shares', value: sharesNum.toLocaleString() },
-            { label: 'Price per Share', value: formatCurrency(property.pricePerShare) },
+            { label: 'Price per Share', value: formatCurrency(quote?.pricePerShare ?? property.pricePerShare) },
             { label: 'Subtotal', value: formatCurrency(totalCost) },
-            { label: `Platform Fee (${(PLATFORM_FEE * 100).toFixed(1)}%)`, value: formatCurrency(platformFee) },
+            { label: `Platform Fee (${(platformFeeRate / 100).toFixed(2)}%)`, value: formatCurrency(platformFee) },
             { label: 'Gas Fee (SOL)', value: `~${GAS_FEE} SOL` },
           ].map((row) => (
             <View key={row.label} style={styles.calcRow}>
@@ -163,7 +492,7 @@ export default function BuySharesScreen() {
           <View style={styles.calcDivider} />
           <View style={styles.calcRow}>
             <Text style={styles.calcTotalLabel}>Total Cost</Text>
-            <Text style={styles.calcTotalVal}>{formatCurrency(totalWithFee)}</Text>
+            <Text style={styles.calcTotalVal}>{formatCurrency(totalCost + platformFee)}</Text>
           </View>
         </View>
 
@@ -184,11 +513,20 @@ export default function BuySharesScreen() {
           </View>
         </View>
 
-        {!canAfford && sharesNum > 0 && (
+        {(quoteError || transactionError || !isConnected || !isDevnet) && (
           <View style={styles.errorBanner}>
             <Text style={styles.errorText}>
-              Insufficient USDC balance. Need {formatCurrency(totalWithFee - MOCK_USDC_BALANCE)} more.
+              {quoteError || transactionError || (!isConnected
+                ? 'Connect wallet first to buy shares.'
+                : 'Switch to devnet mode to execute this flow.')}
             </Text>
+          </View>
+        )}
+
+        {isLoadingQuote && (
+          <View style={styles.loadingInline}>
+            <ActivityIndicator color={Colors.gold} size="small" />
+            <Text style={styles.loadingInlineText}>Refreshing quote...</Text>
           </View>
         )}
 
@@ -218,7 +556,15 @@ export default function BuySharesScreen() {
               <ActivityIndicator color={Colors.background} size="small" />
             ) : (
               <Text style={[styles.confirmBtnText, !canBuy && styles.confirmBtnTextDisabled]}>
-                {canBuy ? `Confirm · ${formatCurrency(totalWithFee)}` : sharesNum === 0 ? 'Enter shares amount' : !canAfford ? 'Insufficient Balance' : 'Invalid amount'}
+                {canBuy
+                  ? `Confirm · ${formatCurrency(totalCost + platformFee)}`
+                  : sharesNum === 0
+                    ? 'Enter shares amount'
+                    : !isConnected
+                      ? 'Connect Wallet'
+                      : !isDevnet
+                        ? 'Switch to Devnet'
+                        : 'Invalid amount'}
               </Text>
             )}
           </LinearGradient>
@@ -230,6 +576,9 @@ export default function BuySharesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+  center: { alignItems: 'center', justifyContent: 'center' },
+  notFound: { fontSize: 18, color: Colors.text, marginBottom: 12 },
+  backLink: { fontSize: 14, color: Colors.gold },
   successScreen: { flex: 1, backgroundColor: Colors.background, alignItems: 'center', justifyContent: 'center', padding: 40 },
   successIcon: { width: 90, height: 90, borderRadius: 45, overflow: 'hidden', marginBottom: 24, shadowColor: Colors.gold, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.6, shadowRadius: 20 },
   successIconGrad: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -388,6 +737,14 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   errorText: { fontSize: 13, color: Colors.red, textAlign: 'center' },
+  loadingInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 14,
+  },
+  loadingInlineText: { fontSize: 12, color: Colors.textMuted },
   securityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
   securityText: { fontSize: 12, color: Colors.textMuted, textAlign: 'center', flex: 1 },
   buyBar: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingTop: 20, paddingHorizontal: 20 },

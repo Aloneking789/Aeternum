@@ -1,12 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, ArrowRight, Layers, DollarSign, Percent, Clock } from 'lucide-react-native';
 import Colors from '@/constants/colors';
+import { updateListingDraft } from '@/services/listingDraft';
+import { useListingDraftStore } from '@/stores/listing-draft-store';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { ArrowLeft, ArrowRight, Clock, DollarSign, Layers, Percent } from 'lucide-react-native';
+import React, { useEffect, useState } from 'react';
+import {
+  Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput, TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const DIST_OPTIONS = ['Monthly', 'Quarterly'];
 
@@ -22,6 +29,10 @@ export default function ListStep2Screen() {
   const [distribution, setDistribution] = useState('Monthly');
   const [lockupPeriod, setLockupPeriod] = useState('');
   const [governanceEnabled, setGovernanceEnabled] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const draftId = useListingDraftStore(s => s.draftId);
+  const setTokenomics = useListingDraftStore(s => s.setTokenomics);
 
   useEffect(() => {
     const amount = parseFloat(tokenizationAmount) || 0;
@@ -33,6 +44,47 @@ export default function ListStep2Screen() {
 
   const canContinue = tokenizationAmount !== '' && totalShares !== ''
     && pricePerShare !== '' && projectedYield !== '' && minInvestment !== '';
+
+  const handleContinue = async () => {
+    if (!canContinue || isSaving) return;
+
+    if (!draftId) {
+      Alert.alert('Missing draft', 'Please complete Step 1 first.');
+      router.replace('/list/step1' as any);
+      return;
+    }
+
+    const parsedTotalShares = Number(totalShares) || 0;
+
+    const tokenomicsPayload = {
+      tokenModel: 'fractional',
+      totalValuation: Number(tokenizationAmount) || 0,
+      pricePerShare: Number(pricePerShare) || 0,
+      totalShares: parsedTotalShares,
+      availableShares: parsedTotalShares,
+      yieldPercent: Number(projectedYield) || 0,
+    };
+
+
+
+    try {
+      setIsSaving(true);
+      await updateListingDraft(draftId, {
+        step: 2,
+        tokenomics: tokenomicsPayload,
+      });
+
+      setTokenomics(tokenomicsPayload);
+      router.push('/list/step3' as any);
+    } catch (error) {
+      Alert.alert(
+        'Unable to save step 2',
+        error instanceof Error ? error.message : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -212,8 +264,8 @@ export default function ListStep2Screen() {
         <LinearGradient colors={['transparent', 'rgba(8,9,13,0.98)']} style={StyleSheet.absoluteFill} />
         <TouchableOpacity
           style={[styles.nextBtn, !canContinue && styles.nextBtnDisabled]}
-          onPress={() => router.push('/list/step3' as any)}
-          disabled={!canContinue}
+          onPress={handleContinue}
+          disabled={!canContinue || isSaving}
           activeOpacity={0.85}
         >
           <LinearGradient
@@ -223,7 +275,7 @@ export default function ListStep2Screen() {
             end={{ x: 1, y: 0 }}
           >
             <Text style={[styles.nextBtnText, !canContinue && styles.nextBtnTextDisabled]}>
-              Continue to Rental Model
+              {isSaving ? 'Saving Step 2...' : 'Continue to Rental Model'}
             </Text>
             <ArrowRight size={18} color={canContinue ? Colors.background : Colors.textMuted} />
           </LinearGradient>

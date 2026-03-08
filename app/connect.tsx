@@ -1,15 +1,31 @@
-import React, { useState, useRef } from 'react';
-import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  Animated, ActivityIndicator,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Shield, Check, ChevronRight, Wifi } from 'lucide-react-native';
+import Colors from '@/constants/colors';
 import { useWallet } from '@/context/WalletContext';
 import { WALLET_OPTIONS } from '@/mocks/data';
-import Colors from '@/constants/colors';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { Check, ChevronRight, Shield, Wifi } from 'lucide-react-native';
+import React, { useRef, useState } from 'react';
+import {
+  ActivityIndicator, Alert,
+  Animated,
+  Linking,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const WALLET_INSTALL_LINKS: Record<string, string> = {
+  phantom: 'https://play.google.com/store/apps/details?id=app.phantom',
+  solflare: 'https://play.google.com/store/apps/details?id=com.solflare.mobile',
+};
+
+function isWalletNotInstalledError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.toLowerCase().includes('found no installed wallet that supports the mobile wallet protocol');
+}
 
 export default function ConnectScreen() {
   const router = useRouter();
@@ -33,11 +49,41 @@ export default function ConnectScreen() {
 
   const handleConnect = async () => {
     if (!canConnect || !selectedWallet) return;
+
     try {
       await connect(selectedWallet);
       router.replace('/setup' as any);
     } catch (e) {
       console.log('[Connect] Error:', e);
+
+      if (isWalletNotInstalledError(e)) {
+        const selectedName = WALLET_OPTIONS.find((wallet) => wallet.id === selectedWallet)?.name ?? 'wallet app';
+        const storeUrl = WALLET_INSTALL_LINKS[selectedWallet];
+
+        Alert.alert(
+          `${selectedName} not installed`,
+          `No installed app was found that supports Solana Mobile Wallet Adapter. Install ${selectedName} and try again.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Install',
+              onPress: async () => {
+                if (!storeUrl) return;
+                const supported = await Linking.canOpenURL(storeUrl);
+                if (supported) {
+                  await Linking.openURL(storeUrl);
+                }
+              },
+            },
+          ],
+        );
+        return;
+      }
+
+      Alert.alert(
+        'Wallet connection failed',
+        e instanceof Error ? e.message : 'Unable to connect wallet right now. Please try again.',
+      );
     }
   };
 

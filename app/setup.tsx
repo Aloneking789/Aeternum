@@ -1,15 +1,89 @@
-import React, { useState, useRef } from 'react';
-import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, Switch, ActivityIndicator, Modal, FlatList, Platform,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { User, MapPin, Gift, Bell, Fingerprint, ChevronDown, Check, X, ArrowRight } from 'lucide-react-native';
+import Colors from '@/constants/colors';
 import { useWallet } from '@/context/WalletContext';
 import { COUNTRIES } from '@/mocks/data';
-import Colors from '@/constants/colors';
+import { useWalletStore } from '@/stores/wallet-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  transact,
+  Web3MobileWallet,
+} from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { ArrowRight, Bell, Check, ChevronDown, Fingerprint, Gift, MapPin, User, X } from 'lucide-react-native';
+import React, { useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput, TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const APP_IDENTITY = {
+  name: 'Aeternum',
+  uri: 'https://aeturnum.app',
+  icon: 'favicon.ico',
+};
+
+const BACKEND_TOKEN_KEY = 'aeturnum_backend_token';
+const DEFAULT_BACKEND_BASE_URL = 'https://y-lake-five.vercel.app';
+const BACKEND_BASE_URL = (process.env.EXPO_PUBLIC_BACKEND_BASE_URL ?? DEFAULT_BACKEND_BASE_URL).trim();
+
+type JsonRecord = Record<string, unknown>;
+
+async function requestJson(
+  path: string,
+  options: {
+    method: 'POST' | 'PUT';
+    body: JsonRecord;
+    token?: string;
+  },
+): Promise<{ status: number; data: JsonRecord }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}${path}`, {
+      method: options.method,
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      },
+      body: JSON.stringify(options.body),
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    const data = raw ? safeParseJson(raw) : {};
+
+    if (!response.ok) {
+      const message = typeof data?.message === 'string'
+        ? data.message
+        : `Request failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    return { status: response.status, data };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function safeParseJson(raw: string): JsonRecord {
+  try {
+    return JSON.parse(raw) as JsonRecord;
+  } catch {
+    return { raw };
+  }
+}
 
 export default function SetupScreen() {
   const router = useRouter();
@@ -46,7 +120,88 @@ export default function SetupScreen() {
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
+
     try {
+      const { authToken, isDevnet, setWalletData, walletType, publicKeyBase58 } = useWalletStore.getState();
+      const chain = isDevnet ? 'solana:devnet' : 'solana:mainnet-beta';
+
+      const signResult = await transact(async (wallet: Web3MobileWallet) => {
+        const authResult = await wallet.authorize({
+          chain,
+          identity: APP_IDENTITY,
+          auth_token: authToken ?? undefined,
+        });
+
+        const message = 'Sign into mechanical turks';
+        const payload = new TextEncoder().encode(message);
+        const signatures = await wallet.signMessages({
+          addresses: [authResult.accounts[0].address],
+          payloads: [payload],
+        });
+
+        return {
+          authToken: authResult.auth_token ?? authToken ?? '',
+          message,
+          signatureBase64: Buffer.from(signatures[0]).toString('base64'),
+        };
+      });
+
+      if (walletType && publicKeyBase58) {
+        setWalletData({
+          walletType,
+          publicKeyBase58,
+          authToken: signResult.authToken,
+        });
+      }
+
+      const signinPayload = {
+        signature: signResult.signatureBase64,
+        publicKey: publicKeyBase58 ?? walletAddress ?? '',
+      };
+      console.log('[Setup] /signin payload:', signinPayload);
+
+      let signinData: JsonRecord | null = null;
+      try {
+        const signinResponse = await requestJson('/user/signin', {
+          method: 'POST',
+          body: signinPayload,
+        });
+        signinData = signinResponse.data;
+        console.log('[Setup] /signin status:', signinResponse.status);
+        console.log('[Setup] /signin response:', signinData);
+      } catch (firstError) {
+        // One retry helps with flaky mobile network transitions.
+        const signinRetry = await requestJson('/user/signin', {
+          method: 'POST',
+          body: signinPayload,
+        });
+        signinData = signinRetry.data;
+        console.log('[Setup] /signin retry status:', signinRetry.status);
+        console.log('[Setup] /signin retry response:', signinData);
+        console.log('[Setup] /signin first error:', firstError);
+      }
+
+      const token = signinData?.token ? String(signinData.token) : '';
+      if (!token) {
+        throw new Error('Signin succeeded but token was missing in response');
+      }
+
+      await AsyncStorage.setItem(BACKEND_TOKEN_KEY, token);
+
+      const profilePayload = {
+        username,
+        country: country || undefined,
+      };
+      console.log('[Setup] /user/profile payload:', profilePayload);
+
+      const profileResponse = await requestJson('/user/profile', {
+        method: 'PUT',
+        body: profilePayload,
+        token,
+      });
+      console.log('[Setup] /user/profile status:', profileResponse.status);
+      console.log('[Setup] /user/profile response:', profileResponse.data);
+
       await setup({
         username,
         country: country || undefined,
@@ -56,6 +211,10 @@ export default function SetupScreen() {
       router.replace('/(tabs)/home' as any);
     } catch (e) {
       console.log('[Setup] Error:', e);
+      Alert.alert(
+        'Setup failed',
+        `Could not reach backend at ${BACKEND_BASE_URL}. Check device internet, VPN/Private DNS, and backend availability.\n\n${e instanceof Error ? e.message : 'Unknown error'}`,
+      );
     }
   };
 

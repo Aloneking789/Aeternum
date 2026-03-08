@@ -1,12 +1,20 @@
+import Colors from '@/constants/colors';
+import { submitListingDraft, updateListingDraft } from '@/services/listingDraft';
+import { useListingDraftStore } from '@/stores/listing-draft-store';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { ArrowLeft, Building2, Check, FileText, Layers, Send, TrendingUp } from 'lucide-react-native';
 import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Check, Building2, Layers, TrendingUp, FileText, Send } from 'lucide-react-native';
-import Colors from '@/constants/colors';
 
 export default function ReviewScreen() {
   const router = useRouter();
@@ -16,15 +24,49 @@ export default function ReviewScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
 
+  const draftId = useListingDraftStore(s => s.draftId);
+  const basicInfo = useListingDraftStore(s => s.basicInfo);
+  const tokenomics = useListingDraftStore(s => s.tokenomics);
+  const mediaUploads = useListingDraftStore(s => s.mediaUploads);
+  const legalDocs = useListingDraftStore(s => s.legalDocs);
+  const resetDraftStore = useListingDraftStore(s => s.reset);
+
   const canSubmit = confirmedInfo && confirmedTerms;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
-    setIsSubmitting(true);
-    await new Promise(r => setTimeout(r, 2500));
-    setIsSubmitting(false);
-    setIsSuccess(true);
-    setTimeout(() => router.replace('/(tabs)/listings' as any), 2500);
+
+    if (!draftId) {
+      Alert.alert('Missing draft', 'Please complete previous steps before submitting.');
+      router.replace('/list/step1' as any);
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+
+      await updateListingDraft(draftId, {
+        step: 4,
+        legalDocs: {
+          titleDeedUrl: legalDocs?.titleDeedUrl,
+          ownershipProofUrl: legalDocs?.ownershipProofUrl,
+          complianceCertificateUrl: legalDocs?.complianceCertificateUrl,
+        },
+      });
+
+      await submitListingDraft(draftId);
+      resetDraftStore();
+
+      setIsSuccess(true);
+      setTimeout(() => router.replace('/(tabs)/listings' as any), 2500);
+    } catch (error) {
+      Alert.alert(
+        'Unable to submit listing',
+        error instanceof Error ? error.message : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (isSuccess) {
@@ -83,10 +125,10 @@ export default function ReviewScreen() {
             color: Colors.gold,
             title: 'Property Information',
             items: [
-              { label: 'Name', value: 'Azure Skyline Tower' },
-              { label: 'Type', value: 'Commercial' },
-              { label: 'Location', value: 'Dubai, UAE' },
-              { label: 'Valuation', value: '$12,500,000' },
+              { label: 'Name', value: basicInfo?.name || '—' },
+              { label: 'Type', value: basicInfo?.type || '—' },
+              { label: 'Location', value: [basicInfo?.city, basicInfo?.country].filter(Boolean).join(', ') || '—' },
+              { label: 'Address', value: basicInfo?.addressFull || '—' },
             ],
           },
           {
@@ -94,10 +136,10 @@ export default function ReviewScreen() {
             color: Colors.cyan,
             title: 'Token Structure',
             items: [
-              { label: 'Tokenized Amount', value: '$6,250,000' },
-              { label: 'Total Shares', value: '125,000' },
-              { label: 'Price per Share', value: '$50.00' },
-              { label: 'Min Investment', value: '$100' },
+              { label: 'Tokenized Amount', value: tokenomics?.totalValuation ? `$${tokenomics.totalValuation.toLocaleString()}` : '—' },
+              { label: 'Total Shares', value: tokenomics?.totalShares ? tokenomics.totalShares.toLocaleString() : '—' },
+              { label: 'Price per Share', value: tokenomics?.pricePerShare ? `$${tokenomics.pricePerShare.toLocaleString()}` : '—' },
+              { label: 'Available Shares', value: tokenomics?.availableShares ? tokenomics.availableShares.toLocaleString() : '—' },
             ],
           },
           {
@@ -105,10 +147,10 @@ export default function ReviewScreen() {
             color: Colors.green,
             title: 'Financial Model',
             items: [
-              { label: 'Monthly Rental', value: '$45,000' },
-              { label: 'Net Monthly Income', value: '$32,400' },
-              { label: 'Projected Yield', value: '9.5% APY' },
-              { label: 'Distribution', value: 'Monthly' },
+              { label: 'Projected Yield', value: tokenomics?.yieldPercent ? `${tokenomics.yieldPercent}% APY` : '—' },
+              { label: 'Token Model', value: tokenomics?.tokenModel || '—' },
+              { label: 'Draft Step', value: '3 / 4' },
+              { label: 'Status', value: 'Draft' },
             ],
           },
           {
@@ -116,9 +158,9 @@ export default function ReviewScreen() {
             color: Colors.purple,
             title: 'Documents',
             items: [
-              { label: 'Ownership Proof', value: '✓ Uploaded' },
-              { label: 'Valuation Report', value: '✓ Uploaded' },
-              { label: 'Property Photos', value: '✓ 5 photos' },
+              { label: 'Ownership Proof', value: legalDocs?.ownershipProofUrl ? '✓ Uploaded' : 'Not uploaded' },
+              { label: 'Title Deed', value: legalDocs?.titleDeedUrl ? '✓ Uploaded' : 'Not uploaded' },
+              { label: 'Property Photos', value: mediaUploads?.images?.length ? `✓ ${mediaUploads.images.length} photo(s)` : 'No photos uploaded' },
             ],
           },
         ].map((section) => (

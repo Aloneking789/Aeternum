@@ -1,14 +1,23 @@
+import Colors from '@/constants/colors';
+import { COUNTRIES, PROPERTY_TYPES } from '@/mocks/data';
+import { createListingDraftStep1, uploadListingImage } from '@/services/listingDraft';
+import { useListingDraftStore } from '@/stores/listing-draft-store';
+import * as ImagePicker from 'expo-image-picker';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { ArrowLeft, ArrowRight, Building2, Check, ChevronDown, DollarSign, Image as ImageIcon, MapPin, X } from 'lucide-react-native';
 import React, { useState } from 'react';
 import {
-  View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, Modal, FlatList,
+  Alert,
+  FlatList,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput, TouchableOpacity,
+  View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, ArrowRight, Building2, MapPin, DollarSign, ChevronDown, Check, X, Image as ImageIcon } from 'lucide-react-native';
-import { COUNTRIES, PROPERTY_TYPES } from '@/mocks/data';
-import Colors from '@/constants/colors';
 
 export default function ListStep1Screen() {
   const router = useRouter();
@@ -27,6 +36,16 @@ export default function ListStep1Screen() {
   const [typeModal, setTypeModal] = useState(false);
   const [countryModal, setCountryModal] = useState(false);
   const [countrySearch, setCountrySearch] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingPhotos, setIsUploadingPhotos] = useState(false);
+  const [isUploadingProof, setIsUploadingProof] = useState(false);
+
+  const setDraftId = useListingDraftStore(s => s.setDraftId);
+  const setBasicInfo = useListingDraftStore(s => s.setBasicInfo);
+  const mediaUploads = useListingDraftStore(s => s.mediaUploads);
+  const legalDocs = useListingDraftStore(s => s.legalDocs);
+  const setMediaUploads = useListingDraftStore(s => s.setMediaUploads);
+  const setLegalDocs = useListingDraftStore(s => s.setLegalDocs);
 
   const filteredCountries = COUNTRIES.filter(c =>
     c.toLowerCase().includes(countrySearch.toLowerCase())
@@ -35,8 +54,142 @@ export default function ListStep1Screen() {
   const canContinue = propertyName.length > 0 && propertyType !== '' && country !== ''
     && city.length > 0 && totalValue !== '' && description.length > 10;
 
-  const handleNext = () => {
-    router.push('/list/step2' as any);
+  const handleUploadPhotos = async () => {
+    if (isUploadingPhotos) return;
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Allow photo access to upload property images.');
+      return;
+    }
+
+    try {
+      setIsUploadingPhotos(true);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: true,
+        selectionLimit: 10,
+        quality: 0.8,
+      });
+
+      if (result.canceled || !result.assets.length) return;
+
+      const uploadedUrls = await Promise.all(
+        result.assets.map(async (asset) => {
+          return uploadListingImage({
+            uri: asset.uri,
+            name: asset.fileName ?? `property-${Date.now()}.jpg`,
+            type: asset.mimeType ?? 'image/jpeg',
+          });
+        }),
+      );
+
+      const validUrls = uploadedUrls.filter(Boolean);
+      if (!validUrls.length) {
+        Alert.alert('Upload failed', 'No valid image URL was returned by server.');
+        return;
+      }
+
+      const existingImages = mediaUploads?.images ?? [];
+      const mergedImages = Array.from(new Set([...existingImages, ...validUrls]));
+      setMediaUploads({
+        coverImageUrl: mediaUploads?.coverImageUrl ?? mergedImages[0],
+        images: mergedImages,
+        videoUrl: mediaUploads?.videoUrl,
+      });
+
+      Alert.alert('Upload complete', `${validUrls.length} image(s) uploaded.`);
+    } catch (error) {
+      Alert.alert(
+        'Photo upload failed',
+        error instanceof Error ? error.message : 'Something went wrong while uploading photos.',
+      );
+    } finally {
+      setIsUploadingPhotos(false);
+    }
+  };
+
+  const handleUploadOwnershipProof = async () => {
+    if (isUploadingProof) return;
+
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Permission required', 'Allow photo access to upload ownership proof.');
+      return;
+    }
+
+    try {
+      setIsUploadingProof(true);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsMultipleSelection: false,
+        quality: 0.9,
+      });
+
+      if (result.canceled || !result.assets.length) return;
+
+      const asset = result.assets[0];
+      const uploadedUrl = await uploadListingImage({
+        uri: asset.uri,
+        name: asset.fileName ?? `ownership-${Date.now()}.jpg`,
+        type: asset.mimeType ?? 'image/jpeg',
+      });
+
+      if (!uploadedUrl) {
+        Alert.alert('Upload failed', 'No valid URL was returned by server.');
+        return;
+      }
+
+      setLegalDocs({
+        titleDeedUrl: legalDocs?.titleDeedUrl,
+        ownershipProofUrl: uploadedUrl,
+        complianceCertificateUrl: legalDocs?.complianceCertificateUrl,
+      });
+
+      Alert.alert('Uploaded', 'Ownership proof uploaded successfully.');
+    } catch (error) {
+      Alert.alert(
+        'Document upload failed',
+        error instanceof Error ? error.message : 'Something went wrong while uploading the document.',
+      );
+    } finally {
+      setIsUploadingProof(false);
+    }
+  };
+
+  const handleNext = async () => {
+    if (!canContinue || isSaving) return;
+
+    try {
+      setIsSaving(true);
+
+      const payload = {
+        step: 1 as const,
+        basicInfo: {
+          name: propertyName.trim(),
+          type: propertyType.trim().toLowerCase(),
+          country: country.trim(),
+          city: city.trim(),
+          addressFull: address.trim() || undefined,
+          description: description.trim(),
+          yearBuilt: yearBuilt ? Number(yearBuilt) : undefined,
+          areaSqft: areaSize ? Number(areaSize) : undefined,
+        },
+      };
+
+      const draft = await createListingDraftStep1(payload);
+      setDraftId(draft.id);
+      setBasicInfo(payload.basicInfo);
+
+      router.push('/list/step2' as any);
+    } catch (error) {
+      Alert.alert(
+        'Unable to save step 1',
+        error instanceof Error ? error.message : 'Something went wrong. Please try again.',
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -201,20 +354,30 @@ export default function ListStep1Screen() {
 
         <View style={styles.uploadSection}>
           <Text style={styles.sectionLabel}>DOCUMENTS</Text>
-          <TouchableOpacity style={styles.uploadCard} activeOpacity={0.8}>
+          <TouchableOpacity style={styles.uploadCard} activeOpacity={0.8} onPress={handleUploadPhotos}>
             <ImageIcon size={24} color={Colors.textMuted} />
             <Text style={styles.uploadTitle}>Property Photos</Text>
-            <Text style={styles.uploadSub}>Min. 3 photos required</Text>
+            <Text style={styles.uploadSub}>
+              {mediaUploads?.images?.length
+                ? `${mediaUploads.images.length} photo(s) uploaded   `
+                : 'Min. 3 photos required   '}
+            </Text>
             <View style={styles.uploadBtn}>
-              <Text style={styles.uploadBtnText}>+ Add Photos</Text>
+              <Text style={styles.uploadBtnText}>{isUploadingPhotos ? 'Uploading...' : '+ Add Photos'}</Text>
             </View>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.uploadCard, { marginTop: 10 }]} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={[styles.uploadCard, { marginTop: 10 }]}
+            activeOpacity={0.8}
+            onPress={handleUploadOwnershipProof}
+          >
             <Text style={styles.uploadDocIcon}>📋</Text>
             <Text style={styles.uploadTitle}>Ownership Proof</Text>
-            <Text style={styles.uploadSub}>PDF or image · Required</Text>
+            <Text style={styles.uploadSub}>
+              {legalDocs?.ownershipProofUrl ? 'Document uploaded       ' : 'Image upload supported   '}
+            </Text>
             <View style={styles.uploadBtn}>
-              <Text style={styles.uploadBtnText}>+ Upload Document</Text>
+              <Text style={styles.uploadBtnText}>{isUploadingProof ? 'Uploading...' : '+ Upload Document'}</Text>
             </View>
           </TouchableOpacity>
         </View>
@@ -225,7 +388,7 @@ export default function ListStep1Screen() {
         <TouchableOpacity
           style={[styles.nextBtn, !canContinue && styles.nextBtnDisabled]}
           onPress={handleNext}
-          disabled={!canContinue}
+          disabled={!canContinue || isSaving}
           activeOpacity={0.85}
         >
           <LinearGradient
@@ -235,7 +398,7 @@ export default function ListStep1Screen() {
             end={{ x: 1, y: 0 }}
           >
             <Text style={[styles.nextBtnText, !canContinue && styles.nextBtnTextDisabled]}>
-              Continue to Tokenization
+              {isSaving ? 'Saving Step 1...' : 'Continue to Tokenization'}
             </Text>
             <ArrowRight size={18} color={canContinue ? Colors.background : Colors.textMuted} />
           </LinearGradient>

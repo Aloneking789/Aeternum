@@ -1,14 +1,23 @@
-import React from 'react';
-import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Image,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Plus, Building2, MapPin, ChevronRight, Users, Edit3 } from 'lucide-react-native';
-import { useWallet } from '@/context/WalletContext';
-import { formatCurrency } from '@/mocks/data';
 import Colors from '@/constants/colors';
+import { formatCurrency } from '@/mocks/data';
+import { ApiError } from '@/services/api';
+import { fetchListingDrafts, ListingDraftListItem, mintPropertyFromDraft } from '@/services/listingDraft';
+import { fetchMyListings } from '@/services/property';
+import { Listing } from '@/types';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { Building2, ChevronRight, MapPin, Plus, Users } from 'lucide-react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   draft: { label: 'Draft', color: Colors.textMuted, bg: Colors.border },
@@ -21,11 +30,76 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }
 export default function ListingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { listings } = useWallet();
+  const [myListings, setMyListings] = useState<Listing[]>([]);
+  const [isLoadingMyListings, setIsLoadingMyListings] = useState(true);
+  const [myListingsError, setMyListingsError] = useState('');
+  const [drafts, setDrafts] = useState<ListingDraftListItem[]>([]);
+  const [isLoadingDrafts, setIsLoadingDrafts] = useState(true);
+  const [draftError, setDraftError] = useState('');
+  const [mintingDraftId, setMintingDraftId] = useState<string | null>(null);
 
-  const totalRaised = listings.reduce((s, l) => s + l.amountRaised, 0);
-  const totalTarget = listings.reduce((s, l) => s + l.totalTarget, 0);
-  const liveCount = listings.filter(l => l.status === 'live').length;
+  const activeListings = useMemo(
+    () => myListings.filter((listing) => listing.status !== 'draft'),
+    [myListings],
+  );
+
+  const loadMyListings = useCallback(async () => {
+    try {
+      setIsLoadingMyListings(true);
+      setMyListingsError('');
+      const data = await fetchMyListings(1, 100);
+      setMyListings(data);
+    } catch (error) {
+      setMyListingsError(error instanceof Error ? error.message : 'Unable to fetch my listings');
+      setMyListings([]);
+    } finally {
+      setIsLoadingMyListings(false);
+    }
+  }, []);
+
+  const loadDrafts = useCallback(async () => {
+    try {
+      setIsLoadingDrafts(true);
+      setDraftError('');
+      const data = await fetchListingDrafts();
+      setDrafts(data);
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : 'Unable to fetch drafts');
+    } finally {
+      setIsLoadingDrafts(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDrafts();
+    loadMyListings();
+  }, [loadDrafts, loadMyListings]);
+
+  const handleMintProperty = async (draftId: string) => {
+    if (mintingDraftId) return;
+
+    try {
+      setMintingDraftId(draftId);
+      console.log('[Listings] mint request:', { draftId });
+      const response = await mintPropertyFromDraft(draftId);
+      console.log('[Listings] mint response:', response);
+      await loadDrafts();
+      await loadMyListings();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        console.log('[Listings] mint error status:', error.status);
+        console.log('[Listings] mint error response:', error.data);
+      } else {
+        console.log('[Listings] mint error:', error);
+      }
+    } finally {
+      setMintingDraftId(null);
+    }
+  };
+
+  const totalRaised = activeListings.reduce((s, l) => s + l.amountRaised, 0);
+  const totalTarget = activeListings.reduce((s, l) => s + l.totalTarget, 0);
+  const liveCount = activeListings.filter((l) => l.status === 'live').length;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -34,7 +108,7 @@ export default function ListingsScreen() {
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>My Listings</Text>
-          <Text style={styles.subtitle}>{listings.length} properties listed</Text>
+          <Text style={styles.subtitle}>{activeListings.length} active properties listed</Text>
         </View>
         <TouchableOpacity
           style={styles.addBtn}
@@ -62,7 +136,84 @@ export default function ListingsScreen() {
           ))}
         </View>
 
-        {listings.length === 0 ? (
+        <Text style={styles.sectionTitle}>Draft Listings</Text>
+        {isLoadingDrafts ? (
+          <View style={styles.draftLoader}>
+            <ActivityIndicator color={Colors.gold} />
+            <Text style={styles.draftLoaderText}>Loading drafts...</Text>
+          </View>
+        ) : draftError ? (
+          <View style={styles.draftErrorBox}>
+            <Text style={styles.draftErrorText}>{draftError}</Text>
+          </View>
+        ) : drafts.length === 0 ? (
+          <View style={styles.draftEmptyBox}>
+            <Text style={styles.draftEmptyText}>No drafts found</Text>
+          </View>
+        ) : (
+          drafts.map((draft) => (
+            <TouchableOpacity
+              key={draft.id}
+              style={styles.draftCard}
+              activeOpacity={0.85}
+              onPress={() => router.push(`/list/draft/${draft.id}` as any)}
+            >
+              <View style={styles.draftHeader}>
+                <Text style={styles.draftName}>{draft.step1Data?.name || 'Untitled draft'}</Text>
+                <View style={styles.draftStatusBadge}>
+                  <Text style={styles.draftStatusText}>{draft.workflowStatus}</Text>
+                </View>
+              </View>
+
+              <Text style={styles.draftMeta}>
+                {[draft.step1Data?.city, draft.step1Data?.country].filter(Boolean).join(', ') || 'Location missing'}
+              </Text>
+
+              <View style={styles.draftProgressRow}>
+                {/* <Text style={styles.draftProgressText}>Step {draft.stepCompleted} / 4     </Text> */}
+                <Text style={styles.draftProgressText}>
+                  {draft.submittedAt ? 'Submitted  ' : 'Not submitted  '}
+                </Text>
+                <ChevronRight size={14} color={Colors.textMuted} />
+              </View>
+
+              {draft.workflowStatus === 'submitted' && (
+                <TouchableOpacity
+                  style={styles.mintBtn}
+                  activeOpacity={0.85}
+                  onPress={() => handleMintProperty(draft.id)}
+                  disabled={mintingDraftId === draft.id}
+                >
+                  {mintingDraftId === draft.id ? (
+                    <ActivityIndicator size="small" color={Colors.background} />
+                  ) : (
+                    <Text style={styles.mintBtnText}>Mint Property</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+
+              {/* <TouchableOpacity
+                style={styles.editBtn}
+                activeOpacity={0.8}
+                onPress={() => router.push('/list/step1' as any)}
+              >
+                <Edit3 size={14} color={Colors.cyan} />
+                <Text style={styles.editBtnText}>Continue Draft</Text>
+              </TouchableOpacity> */}
+            </TouchableOpacity>
+          ))
+        )}
+
+        {isLoadingMyListings ? (
+          <View style={styles.draftLoader}>
+            <ActivityIndicator color={Colors.gold} />
+            <Text style={styles.draftLoaderText}>Loading your listed properties...</Text>
+          </View>
+        ) : myListingsError ? (
+          <View style={styles.draftErrorBox}>
+            <Text style={styles.draftErrorText}>{myListingsError}</Text>
+          </View>
+        ) : activeListings.length === 0 ? (
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>🏛️</Text>
             <Text style={styles.emptyTitle}>No listings yet</Text>
@@ -81,8 +232,8 @@ export default function ListingsScreen() {
           </View>
         ) : (
           <>
-            <Text style={styles.sectionTitle}>All Listings</Text>
-            {listings.map((listing) => {
+            <Text style={styles.sectionTitle}>Approved / Live Listings</Text>
+            {activeListings.map((listing) => {
               const cfg = STATUS_CONFIG[listing.status];
               const pct = listing.totalTarget > 0
                 ? (listing.amountRaised / listing.totalTarget * 100).toFixed(0)
@@ -141,13 +292,11 @@ export default function ListingsScreen() {
                   )}
 
                   <View style={styles.listingActions}>
-                    {listing.status === 'draft' && (
-                      <TouchableOpacity style={styles.editBtn} activeOpacity={0.8}>
-                        <Edit3 size={14} color={Colors.cyan} />
-                        <Text style={styles.editBtnText}>Edit Draft</Text>
-                      </TouchableOpacity>
-                    )}
-                    <TouchableOpacity style={styles.viewBtn} activeOpacity={0.8}>
+                    <TouchableOpacity
+                      style={styles.viewBtn}
+                      activeOpacity={0.8}
+                      onPress={() => router.push(`/property/${listing.id}` as any)}
+                    >
                       <Text style={styles.viewBtnText}>View Details</Text>
                       <ChevronRight size={14} color={Colors.textMuted} />
                     </TouchableOpacity>
@@ -329,4 +478,65 @@ const styles = StyleSheet.create({
   },
   infoStepNumText: { fontSize: 12, fontWeight: '700' as const, color: Colors.gold },
   infoStepText: { fontSize: 13, color: Colors.textSecondary, lineHeight: 20, flex: 1 },
+  draftLoader: {
+    marginHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    paddingVertical: 18,
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 16,
+  },
+  draftLoaderText: { color: Colors.textMuted, fontSize: 12 },
+  draftErrorBox: {
+    marginHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.red,
+    backgroundColor: Colors.redGlow,
+    padding: 12,
+    marginBottom: 16,
+  },
+  draftErrorText: { color: Colors.red, fontSize: 12 },
+  draftEmptyBox: {
+    marginHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    padding: 12,
+    marginBottom: 16,
+  },
+  draftEmptyText: { color: Colors.textMuted, fontSize: 12 },
+  draftCard: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    padding: 14,
+  },
+  draftHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  draftName: { color: Colors.text, fontSize: 14, fontWeight: '700' as const, flex: 1, marginRight: 8 },
+  draftStatusBadge: { backgroundColor: Colors.goldGlow, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: Colors.goldDark },
+  draftStatusText: { color: Colors.gold, fontSize: 11, fontWeight: '600' as const },
+  draftMeta: { color: Colors.textMuted, fontSize: 12, marginTop: 6 },
+  draftProgressRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8, marginBottom: 10 },
+  draftProgressText: { color: Colors.textSecondary, fontSize: 12 },
+  mintBtn: {
+    marginTop: 2,
+    borderRadius: 8,
+    backgroundColor: Colors.gold,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+  },
+  mintBtnText: {
+    color: Colors.background,
+    fontSize: 12,
+    fontWeight: '700' as const,
+  },
 });

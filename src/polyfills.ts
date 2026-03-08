@@ -1,5 +1,5 @@
-import { getRandomValues as expoCryptoGetRandomValues } from "expo-crypto";
 import { Buffer } from "buffer";
+import { getRandomValues as expoCryptoGetRandomValues } from "expo-crypto";
 
 global.Buffer = global.Buffer || Buffer;
 

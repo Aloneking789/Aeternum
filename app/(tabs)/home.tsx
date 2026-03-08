@@ -1,32 +1,38 @@
-import React, { useRef, useEffect } from 'react';
-import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Animated, Dimensions,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Bell, Copy, TrendingUp, Layers, Zap, Building2, ChevronRight, ArrowUpRight, ArrowDownRight } from 'lucide-react-native';
-import Svg, { Path, Defs, LinearGradient as SvgGrad, Stop } from 'react-native-svg';
+import Colors from '@/constants/colors';
 import { useWallet } from '@/context/WalletContext';
 import { MOCK_ACTIVITY, formatCurrency } from '@/mocks/data';
-import Colors from '@/constants/colors';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { ArrowDownRight, ArrowUpRight, Bell, Building2, ChevronRight, Copy, Layers, TrendingUp, Zap } from 'lucide-react-native';
+import React, { useEffect, useRef } from 'react';
+import {
+  Animated, Dimensions,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Defs, Path, Stop, LinearGradient as SvgGrad } from 'react-native-svg';
 
 const { width } = Dimensions.get('window');
 const CHART_W = width - 48;
 const CHART_H = 80;
 
 function MiniChart({ data, color }: { data: number[]; color: string }) {
-  const max = Math.max(...data);
-  const min = Math.min(...data);
+  const safeData = data.length > 0 ? data : [0, 0];
+  const max = Math.max(...safeData);
+  const min = Math.min(...safeData);
   const range = max - min || 1;
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * CHART_W;
+  const pts = safeData.map((v, i) => {
+    const denominator = safeData.length > 1 ? safeData.length - 1 : 1;
+    const x = (i / denominator) * CHART_W;
     const y = CHART_H - ((v - min) / range) * (CHART_H - 10);
     return `${x},${y}`;
   });
-  const d = `M ${pts.join(' L ')}`;
-  const fillD = `M 0,${CHART_H} L ${pts.join(' L ')} L ${CHART_W},${CHART_H} Z`;
+  const d = `M ${pts[0]} ${pts.slice(1).map((point) => `L ${point}`).join(' ')}`;
+  const fillD = `M 0,${CHART_H} L ${pts[0]} ${pts.slice(1).map((point) => `L ${point}`).join(' ')} L ${CHART_W},${CHART_H} Z`;
 
   return (
     <Svg width={CHART_W} height={CHART_H}>

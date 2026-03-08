@@ -1,15 +1,23 @@
-import React, { useState, useMemo } from 'react';
-import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Image, Dimensions,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search, SlidersHorizontal, MapPin, Users, TrendingUp, ChevronRight } from 'lucide-react-native';
-import { MOCK_PROPERTIES, formatCurrency } from '@/mocks/data';
-import type { Property } from '@/types';
 import Colors from '@/constants/colors';
+import { formatCurrency } from '@/mocks/data';
+import { fetchProperties } from '@/services/property';
+import type { Property } from '@/types';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { ChevronRight, MapPin, Search, SlidersHorizontal, TrendingUp, Users } from 'lucide-react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 const CARD_W = width - 40;
@@ -110,9 +118,41 @@ export default function ExploreScreen() {
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState('All');
   const [sortBy, setSortBy] = useState('yield');
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadProperties = async () => {
+      try {
+        setIsLoading(true);
+        setLoadError('');
+        const data = await fetchProperties();
+        if (mounted) {
+          setProperties(data);
+        }
+      } catch (error) {
+        if (mounted) {
+          setLoadError(error instanceof Error ? error.message : 'Unable to fetch properties');
+        }
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadProperties();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const filtered = useMemo(() => {
-    let list = [...MOCK_PROPERTIES];
+    let list = [...properties];
     if (search) {
       list = list.filter(p =>
         p.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -129,7 +169,7 @@ export default function ExploreScreen() {
       case 'price_desc': list.sort((a, b) => b.pricePerShare - a.pricePerShare); break;
     }
     return list;
-  }, [search, selectedType, sortBy]);
+  }, [properties, search, selectedType, sortBy]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -137,7 +177,7 @@ export default function ExploreScreen() {
 
       <View style={styles.header}>
         <Text style={styles.title}>Explore Properties</Text>
-        <Text style={styles.subtitle}>{MOCK_PROPERTIES.length} tokenized assets worldwide</Text>
+        <Text style={styles.subtitle}>{properties.length} tokenized assets worldwide</Text>
       </View>
 
       <View style={styles.searchRow}>
@@ -193,14 +233,25 @@ export default function ExploreScreen() {
       </View>
 
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
-        {filtered.map(p => (
-          <PropertyCard
-            key={p.id}
-            property={p}
-            onPress={() => router.push(`/property/${p.id}` as any)}
-          />
-        ))}
-        {filtered.length === 0 && (
+        {isLoading ? (
+          <View style={styles.loadingBox}>
+            <ActivityIndicator color={Colors.gold} />
+            <Text style={styles.loadingText}>Loading properties...</Text>
+          </View>
+        ) : loadError ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{loadError}</Text>
+          </View>
+        ) : (
+          filtered.map(p => (
+            <PropertyCard
+              key={p.id}
+              property={p}
+              onPress={() => router.push(`/property/${p.id}` as any)}
+            />
+          ))
+        )}
+        {!isLoading && !loadError && filtered.length === 0 && (
           <View style={styles.emptyState}>
             <Text style={styles.emptyIcon}>🏛️</Text>
             <Text style={styles.emptyTitle}>No properties found</Text>
@@ -371,6 +422,26 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   investBtnText: { fontSize: 15, fontWeight: '700' as const, color: Colors.background },
+  loadingBox: {
+    marginHorizontal: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    paddingVertical: 20,
+    alignItems: 'center',
+    gap: 8,
+  },
+  loadingText: { fontSize: 12, color: Colors.textMuted },
+  errorBox: {
+    marginHorizontal: 20,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.red,
+    backgroundColor: Colors.redGlow,
+    padding: 12,
+  },
+  errorText: { fontSize: 12, color: Colors.red },
   emptyState: { alignItems: 'center', paddingTop: 60 },
   emptyIcon: { fontSize: 48, marginBottom: 16 },
   emptyTitle: { fontSize: 18, fontWeight: '700' as const, color: Colors.text, marginBottom: 8 },

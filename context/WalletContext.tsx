@@ -1,4 +1,5 @@
 import { MOCK_INVESTMENTS, MOCK_LISTINGS, MOCK_USER } from '@/mocks/data';
+import { fetchUserProfile } from '@/services/userProfile';
 import { useWalletStore, WalletType } from '@/stores/wallet-store';
 import type { Investment, Listing, UserProfile } from '@/types';
 import createContextHook from '@nkzw/create-context-hook';
@@ -76,11 +77,18 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
   const profileQuery = useQuery({
     queryKey: ['user_profile', walletAddress],
     queryFn: async () => {
-      const stored = await AsyncStorage.getItem(STORAGE_KEYS.PROFILE);
-      if (stored) return JSON.parse(stored) as UserProfile;
-      return { ...MOCK_USER, walletAddress: walletAddress ?? MOCK_USER.walletAddress };
+      try {
+        const profile = await fetchUserProfile();
+        await AsyncStorage.setItem(STORAGE_KEYS.PROFILE, JSON.stringify(profile));
+        return profile;
+      } catch (error) {
+        const stored = await AsyncStorage.getItem(STORAGE_KEYS.PROFILE);
+        if (stored) return JSON.parse(stored) as UserProfile;
+        throw error;
+      }
     },
     enabled: isConnected,
+    retry: 1,
   });
 
   const connectMutation = useMutation({
@@ -190,7 +198,10 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
 
   const investments: Investment[] = MOCK_INVESTMENTS;
   const listings: Listing[] = MOCK_LISTINGS;
-  const profile = profileQuery.data ?? MOCK_USER;
+  const profile = profileQuery.data ?? {
+    ...MOCK_USER,
+    walletAddress: publicKeyBase58 ?? walletAddress ?? MOCK_USER.walletAddress,
+  };
 
   const totalPortfolioValue = investments.reduce((sum, inv) => sum + inv.currentValue, 0);
   const totalInvested = investments.reduce((sum, inv) => sum + inv.purchasePrice, 0);

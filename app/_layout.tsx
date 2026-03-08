@@ -2,7 +2,7 @@
 // These MUST be at the very top, before any other imports
 import { Buffer } from "buffer";
 import "react-native-get-random-values";
-import "./src/polyfills";
+import "../src/polyfills";
 global.Buffer = global.Buffer || Buffer;
 
 import { WalletProvider } from "@/context/WalletContext";
@@ -31,6 +31,7 @@ function RootLayoutNav() {
       <Stack.Screen name="list/step2" options={{ headerShown: false }} />
       <Stack.Screen name="list/step3" options={{ headerShown: false }} />
       <Stack.Screen name="list/review" options={{ headerShown: false }} />
+      <Stack.Screen name="list/draft/[id]" options={{ headerShown: false }} />
       <Stack.Screen name="settings" options={{ headerShown: false }} />
     </Stack>
   );
