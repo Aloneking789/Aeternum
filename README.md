@@ -3,6 +3,7 @@
 Mobile-first real estate tokenization app built with Expo + React Native + TypeScript.
 
 This app supports:
+
 - Wallet-based onboarding (Solana Mobile Wallet Adapter)
 - Property discovery and filtering
 - Fractional buy/sell flows
@@ -19,6 +20,20 @@ This app supports:
     Open it here: <a href="./aeternum.pdf">aeternum.pdf</a>
   </p>
 </object>
+
+## App Preview
+
+### Mobile Preview (1, 2, 3)
+
+![Mobile Preview 1](./assets/images/1pro.jpeg)
+![Mobile Preview 2](./assets/images/2pro.jpeg)
+![Mobile Preview 3](./assets/images/3pro.jpeg)
+
+### Landscape Preview (4)
+
+This image is from the pitch deck.
+
+![Pitch Deck Landscape Preview](./assets/images/4pro.png)
 
 ## Table Of Contents
 
@@ -41,6 +56,7 @@ This app supports:
 ## 1. Overview
 
 `Aeternum Real` is a React Native app that lets users:
+
 - Connect a Solana wallet
 - Complete account setup
 - Browse tokenized properties
@@ -60,6 +76,7 @@ The app uses a backend API for business data and transaction orchestration, with
 - `@solana/web3.js` + Solana Mobile Wallet Adapter for signing/broadcast flows
 
 Key package references:
+
 - `package.json`
 - `app.json`
 
@@ -98,6 +115,7 @@ The app currently supports these runtime env vars:
 - `EXPO_PUBLIC_SOLANA_MAINNET_RPC_FALLBACKS`
 
 Notes:
+
 - `services/api.ts` currently has a hardcoded `BACKEND_BASE_URL` constant. Some screens (for example `app/connect.tsx`) already read `EXPO_PUBLIC_BACKEND_BASE_URL` with fallback.
 - Use comma-separated values for fallback RPC lists.
 
@@ -114,6 +132,7 @@ EXPO_PUBLIC_SOLANA_MAINNET_RPC_FALLBACKS=https://rpc.ankr.com/solana,https://sol
 ## 5. Getting Started
 
 Prerequisites:
+
 - Node.js 18+
 - npm (or yarn/pnpm if you adapt scripts)
 - Expo CLI (via `npx expo` is enough)
@@ -197,6 +216,7 @@ Screen components under `app/` render views and user interactions.
 ### Data Flow Pattern
 
 Typical request pattern:
+
 1. Screen/action triggers context method or service function.
 2. Service uses `apiRequest` in `services/api.ts`.
 3. `apiRequest` injects bearer token when `requiresAuth` is true.
@@ -253,6 +273,7 @@ All draft endpoints are implemented in `services/listingDraft.ts`.
 Main logic lives in `app/connect.tsx` and `context/WalletContext.tsx`.
 
 Connection/signin sequence:
+
 1. User selects wallet in `/connect`.
 2. App calls wallet `authorize` through mobile wallet adapter.
 3. Wallet public key is decoded and persisted in Zustand + AsyncStorage session keys.
@@ -263,6 +284,7 @@ Connection/signin sequence:
 8. User is routed to `/(tabs)/home`.
 
 Token usage:
+
 - `services/api.ts` injects `Authorization: Bearer <token>` automatically for auth-required requests.
 
 ## 11. Listing Draft Flow
@@ -272,11 +294,13 @@ The list flow is multi-step and backend-driven.
 ### Step 1
 
 Creates a draft with basic property info:
+
 - `name`, `type`, `country`, `city`, `addressFull`, `description`, `yearBuilt`, `areaSqft`
 
 ### Step 2
 
 Tokenomics payload supports:
+
 - `tokenModel`
 - `totalValuation`
 - `pricePerShare`
@@ -293,6 +317,7 @@ Tokenomics payload supports:
 ### Step 3
 
 Media/doc references:
+
 - `coverImageUrl`
 - `images[]`
 - `videoUrl`
@@ -300,6 +325,7 @@ Media/doc references:
 ### Step 4 and Submit
 
 Legal docs and final submission:
+
 - `titleDeedUrl`
 - `ownershipProofUrl`
 - `complianceCertificateUrl`
@@ -311,6 +337,7 @@ Then submit draft and optionally mint property via `/property/mint/property`.
 Implemented across `context/WalletContext.tsx`, `services/transactions.ts`, and `services/yield.ts`.
 
 High-level pattern:
+
 1. Backend returns an `unsignedTx` (base64).
 2. App deserializes to `VersionedTransaction`.
 3. App requests wallet signing (or sign+send when available).
@@ -318,6 +345,7 @@ High-level pattern:
 5. App confirms signature and reports to backend confirm endpoint.
 
 RPC fallback:
+
 - For claim flow, the app cycles through configured RPC endpoints (`EXPO_PUBLIC_SOLANA_*` + defaults).
 
 ## 13. Error Handling Strategy
@@ -379,6 +407,7 @@ Backend numeric fields can arrive as `number | string | null` (and property feed
 ---
 
 If you want, this README can be further extended with:
+
 1. Screen-by-screen UI documentation with screenshots.
 2. Sequence diagrams for buy/sell/claim and listing submission.
 3. A backend contract appendix with request/response examples for each endpoint.
