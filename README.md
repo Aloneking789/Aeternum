@@ -1,5 +1,8 @@
 ﻿# Aeternum Real
 
+![Pitch Deck Landscape Preview](./assets/images/4pro.png)
+
+
 Mobile-first real estate tokenization app built with Expo + React Native + TypeScript.
 
 This app supports:
@@ -29,11 +32,6 @@ This app supports:
 ![Mobile Preview 2](./assets/images/2pro.jpeg)
 ![Mobile Preview 3](./assets/images/3pro.jpeg)
 
-### Landscape Preview (4)
-
-This image is from the pitch deck.
-
-![Pitch Deck Landscape Preview](./assets/images/4pro.png)
 
 ## Table Of Contents
 
