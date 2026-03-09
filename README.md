@@ -1,4 +1,4 @@
-﻿# Aeternum Real
+﻿# Aeternum
 
 ![Pitch Deck Landscape Preview](./assets/images/4pro.png)
 
@@ -32,6 +32,9 @@ This app supports:
 ![Mobile Preview 2](./assets/images/2pro.jpeg)
 ![Mobile Preview 3](./assets/images/3pro.jpeg)
 
+
+## Backend Link
+[Solana Backend Repository](https://github.com/ag21o9/SolanaBackend)
 
 ## Table Of Contents
 
