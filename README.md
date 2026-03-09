@@ -29,8 +29,10 @@ This app supports:
 ### Mobile Preview (1, 2, 3)
 
 ![Mobile Preview 1](./assets/images/1pro.jpeg)
-![Mobile Preview 2](./assets/images/2pro.jpeg)
-![Mobile Preview 3](./assets/images/3pro.jpeg)
+
+## App Demo
+
+[![Watch the Demo](https://img.youtube.com/vi/ZfRWPLrzR8Y/0.jpg)](https://youtu.be/ZfRWPLrzR8Y)
 
 
 ## Backend Link
