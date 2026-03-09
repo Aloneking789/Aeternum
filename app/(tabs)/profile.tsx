@@ -107,7 +107,7 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        <View style={styles.section}>
+        {/* <View style={styles.section}>
           <Text style={styles.sectionTitle}>Referral Program</Text>
           <View style={styles.referralCard}>
             <LinearGradient
@@ -126,7 +126,7 @@ export default function ProfileScreen() {
               <Text style={styles.shareBtnText}>Share Code</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </View> */}
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account</Text>

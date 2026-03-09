@@ -1,4 +1,4 @@
-import { apiRequest } from "@/services/api";
+import { ApiError, apiRequest } from "@/services/api";
 
 type NumericLike = number | string | null;
 
@@ -57,6 +57,10 @@ export type ConfirmBuyResponse = {
   };
   tokenAccountAddress?: string;
 };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function toNumber(value: NumericLike, fallback = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -139,9 +143,34 @@ export async function confirmTransaction(params: {
   shares: number;
   side: "buy" | "sell";
 }): Promise<ConfirmBuyResponse> {
-  return apiRequest<ConfirmBuyResponse>("/api/transactions/confirm", {
-    method: "POST",
-    body: params,
-    requiresAuth: true,
-  });
+  // Mobile network can briefly drop after returning from wallet app; retry
+  // network-level failures only (status 0) to avoid masking real API errors.
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await apiRequest<ConfirmBuyResponse>("/api/transactions/confirm", {
+        method: "POST",
+        body: params,
+        requiresAuth: true,
+      });
+    } catch (error) {
+      const isNetworkFailure = error instanceof ApiError && error.status === 0;
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!isNetworkFailure || isLastAttempt) {
+        throw error;
+      }
+
+      console.warn("[Transactions] confirm retry after network failure", {
+        attempt,
+        txSignature: params.txSignature,
+        propertyId: params.propertyId,
+      });
+
+      await sleep(500 * attempt);
+    }
+  }
+
+  throw new Error("Transaction confirm failed after retries");
 }

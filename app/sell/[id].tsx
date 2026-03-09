@@ -1,6 +1,7 @@
 import Colors from '@/constants/colors';
 import { useWallet } from '@/context/WalletContext';
 import { formatCurrency } from '@/mocks/data';
+import { ApiError } from '@/services/api';
 import { fetchPropertyById } from '@/services/property';
 import {
   confirmTransaction,
@@ -23,6 +24,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   ScrollView,
   StyleSheet,
   Text,
@@ -87,6 +89,56 @@ async function sendAndConfirmWithFallback(
   }
 
   throw new Error(`All RPC endpoints failed. ${failures.join(' | ')}`);
+}
+
+async function waitForAppActive(timeoutMs = 3000): Promise<void> {
+  if (AppState.currentState === 'active') return;
+
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => {
+      sub.remove();
+      resolve();
+    }, timeoutMs);
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        clearTimeout(timeout);
+        sub.remove();
+        resolve();
+      }
+    });
+  });
+}
+
+async function confirmWithBackoff(params: {
+  txSignature: string;
+  propertyId: string;
+  shares: number;
+  side: 'sell';
+}) {
+  const maxAttempts = 5;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    await waitForAppActive(3500);
+
+    try {
+      return await confirmTransaction(params);
+    } catch (error) {
+      const isNetworkFailure = error instanceof ApiError && error.status === 0;
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!isNetworkFailure || isLastAttempt) {
+        throw error;
+      }
+
+      console.warn('[Sell] confirm backoff retry', {
+        attempt,
+        txSignature: params.txSignature,
+        propertyId: params.propertyId,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 1200 * attempt));
+    }
+  }
 }
 
 export default function SellSharesScreen() {
@@ -335,7 +387,7 @@ export default function SellSharesScreen() {
       console.log('[Sell] confirm request', confirmPayload);
       console.log('[Sell] backend confirm payload JSON', JSON.stringify(confirmPayload));
 
-      const confirmResponse = await confirmTransaction(confirmPayload);
+      const confirmResponse = await confirmWithBackoff(confirmPayload);
 
       console.log('[Sell] confirm success', { txSignature: signature, response: confirmResponse });
       console.log('[Sell] backend confirm response JSON', JSON.stringify(confirmResponse));
@@ -345,9 +397,15 @@ export default function SellSharesScreen() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Sell transaction failed';
       const rpcBlocked = stage === 'wallet-sign-and-send' && message.includes('All RPC endpoints failed');
+      const confirmNetworkBlocked =
+        stage === 'confirm-sell'
+        && error instanceof ApiError
+        && error.status === 0;
       const finalMessage = rpcBlocked
         ? `${message}\n\nYour device cannot reach Solana RPC. Set EXPO_PUBLIC_SOLANA_DEVNET_RPC_URL (or EXPO_PUBLIC_SOLANA_DEVNET_RPC_FALLBACKS) to a reachable endpoint, or disable VPN/Private DNS.`
-        : message;
+        : confirmNetworkBlocked
+          ? `${message}\n\nBackend confirm could not be reached from device network. Keep internet stable (disable VPN/Private DNS) and retry after a few seconds. Do not submit a new sell immediately with different shares.`
+          : message;
 
       console.error('[Sell] transaction error', {
         stage,

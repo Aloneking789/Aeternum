@@ -1,4 +1,5 @@
-import { MOCK_INVESTMENTS, MOCK_LISTINGS, MOCK_USER } from '@/mocks/data';
+import { MOCK_USER } from '@/mocks/data';
+import { fetchMyInvestments } from '@/services/investments';
 import { fetchUserProfile } from '@/services/userProfile';
 import { useWalletStore, WalletType } from '@/stores/wallet-store';
 import type { Investment, Listing, UserProfile } from '@/types';
@@ -136,6 +137,7 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
       setWalletAddress(address);
       setIsSetupComplete(false);
       queryClient.invalidateQueries({ queryKey: ['wallet_session'] });
+      queryClient.invalidateQueries({ queryKey: ['investments_me'] });
       console.log('[WalletContext] Connected:', address);
     },
   });
@@ -182,6 +184,7 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
       setIsSetupComplete(false);
       queryClient.invalidateQueries({ queryKey: ['wallet_session'] });
       queryClient.invalidateQueries({ queryKey: ['user_profile'] });
+      queryClient.invalidateQueries({ queryKey: ['investments_me'] });
     },
   });
 
@@ -193,20 +196,32 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user_profile'] });
+      queryClient.invalidateQueries({ queryKey: ['investments_me'] });
     },
   });
 
-  const investments: Investment[] = MOCK_INVESTMENTS;
-  const listings: Listing[] = MOCK_LISTINGS;
+  const investmentsSummaryQuery = useQuery({
+    queryKey: ['investments_me'],
+    queryFn: fetchMyInvestments,
+    enabled: isConnected,
+    retry: 1,
+  });
+
+  const investments: Investment[] = investmentsSummaryQuery.data?.investments ?? [];
+  const listings: Listing[] = investmentsSummaryQuery.data?.listings ?? [];
   const profile = profileQuery.data ?? {
     ...MOCK_USER,
     walletAddress: publicKeyBase58 ?? walletAddress ?? MOCK_USER.walletAddress,
   };
 
-  const totalPortfolioValue = investments.reduce((sum, inv) => sum + inv.currentValue, 0);
-  const totalInvested = investments.reduce((sum, inv) => sum + inv.purchasePrice, 0);
-  const totalYieldEarned = investments.reduce((sum, inv) => sum + inv.yieldEarned, 0);
-  const totalClaimable = investments.reduce((sum, inv) => sum + inv.claimableYield, 0);
+  const totalPortfolioValue = investmentsSummaryQuery.data?.totals.totalCurrentValue
+    ?? investments.reduce((sum, inv) => sum + inv.currentValue, 0);
+  const totalInvested = investmentsSummaryQuery.data?.totals.totalPurchasePrice
+    ?? investments.reduce((sum, inv) => sum + inv.purchasePrice, 0);
+  const totalYieldEarned = investmentsSummaryQuery.data?.totals.totalYieldEarned
+    ?? investments.reduce((sum, inv) => sum + inv.yieldEarned, 0);
+  const totalClaimable = investmentsSummaryQuery.data?.totals.totalClaimableYield
+    ?? investments.reduce((sum, inv) => sum + inv.claimableYield, 0);
   const overallROI = totalInvested > 0
     ? ((totalPortfolioValue + totalYieldEarned - totalInvested) / totalInvested) * 100
     : 0;

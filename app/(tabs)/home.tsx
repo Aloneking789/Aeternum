@@ -187,39 +187,7 @@ export default function HomeScreen() {
             </View>
           </View>
 
-          <View style={styles.activitySection}>
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>Live Activity</Text>
-              <View style={styles.liveBadge}>
-                <View style={styles.liveDot} />
-                <Text style={styles.liveText}>Live</Text>
-              </View>
-            </View>
-            {MOCK_ACTIVITY.map((item) => (
-              <View key={item.id} style={styles.activityItem}>
-                <View style={[styles.activityIcon, {
-                  backgroundColor: item.type === 'investment' ? Colors.cyanGlow
-                    : item.type === 'yield' ? Colors.greenGlow : Colors.goldGlow,
-                }]}>
-                  {item.type === 'investment' && <TrendingUp size={14} color={Colors.cyan} />}
-                  {item.type === 'yield' && <Zap size={14} color={Colors.green} />}
-                  {item.type === 'transfer' && <ArrowUpRight size={14} color={Colors.gold} />}
-                </View>
-                <View style={styles.activityInfo}>
-                  <Text style={styles.activityUser}>{item.user}</Text>
-                  <Text style={styles.activityType}>
-                    {item.type === 'investment' ? `Invested ${item.shares} shares`
-                      : item.type === 'yield' ? 'Claimed yield'
-                        : `Transferred ${item.shares} shares`}
-                  </Text>
-                </View>
-                <View style={styles.activityRight}>
-                  <Text style={styles.activityAmount}>+{formatCurrency(item.amount, true)}</Text>
-                  <Text style={styles.activityDate}>{item.date}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
+
         </Animated.View>
       </ScrollView>
     </View>
