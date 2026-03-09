@@ -76,7 +76,7 @@ export default function HomeScreen() {
 
       <View style={styles.topBar}>
         <View>
-          <Text style={styles.greeting}>Good morning 👋</Text>
+          <Text style={styles.greeting}>Hi 👋</Text>
           <View style={styles.addressRow}>
             <View style={styles.networkDot} />
             <Text style={styles.address}>{walletAddress ?? '—'}</Text>

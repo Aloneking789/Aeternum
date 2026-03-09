@@ -1,6 +1,13 @@
 import Colors from '@/constants/colors';
 import { useWallet } from '@/context/WalletContext';
 import { WALLET_OPTIONS } from '@/mocks/data';
+import { useWalletStore } from '@/stores/wallet-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {
+  transact,
+  Web3MobileWallet,
+} from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
+import { Buffer } from 'buffer';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { Check, ChevronRight, Shield, Wifi } from 'lucide-react-native';
@@ -22,9 +29,187 @@ const WALLET_INSTALL_LINKS: Record<string, string> = {
   solflare: 'https://play.google.com/store/apps/details?id=com.solflare.mobile',
 };
 
+const APP_IDENTITY = {
+  name: 'Aeternum',
+  uri: 'https://aeturnum.app',
+  icon: 'favicon.ico',
+};
+
+const BACKEND_TOKEN_KEY = 'aeturnum_backend_token';
+const DEFAULT_BACKEND_BASE_URL = 'https://y-lake-five.vercel.app';
+const BACKEND_BASE_URL = (process.env.EXPO_PUBLIC_BACKEND_BASE_URL ?? DEFAULT_BACKEND_BASE_URL).trim();
+
+type JsonRecord = Record<string, unknown>;
+
+class HttpRequestError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'HttpRequestError';
+    this.status = status;
+  }
+}
+
+async function requestGetJson(path: string): Promise<{ status: number; data: JsonRecord }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}${path}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    const data = raw ? safeParseJson(raw) : {};
+
+    if (!response.ok) {
+      const message = typeof data?.message === 'string' ? data.message : `Request failed (${response.status})`;
+      throw new HttpRequestError(message, response.status);
+    }
+
+    return { status: response.status, data };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function requestPostJson(path: string, body: JsonRecord): Promise<{ status: number; data: JsonRecord }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+
+    const raw = await response.text();
+    const data = raw ? safeParseJson(raw) : {};
+
+    if (!response.ok) {
+      const message = typeof data?.message === 'string' ? data.message : `Request failed (${response.status})`;
+      throw new Error(message);
+    }
+
+    return { status: response.status, data };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function safeParseJson(raw: string): JsonRecord {
+  try {
+    return JSON.parse(raw) as JsonRecord;
+  } catch {
+    return { raw };
+  }
+}
+
+function isNetworkFailure(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  return message.includes('network request failed') || message.includes('failed to fetch') || message.includes('abort');
+}
+
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = 2): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (!isNetworkFailure(error) || attempt === maxAttempts) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+    }
+  }
+
+  throw lastError;
+}
+
+async function fetchByWalletWithFallback(walletAddress: string): Promise<JsonRecord | null> {
+  const endpoints = [
+    `/by-wallet/${encodeURIComponent(walletAddress)}`,
+    `/user/by-wallet/${encodeURIComponent(walletAddress)}`,
+  ];
+
+  for (const endpoint of endpoints) {
+    try {
+      const response = await withRetry(() => requestGetJson(endpoint), 2);
+      return response.data;
+    } catch (error) {
+      if (error instanceof HttpRequestError && error.status === 404) {
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return null;
+}
+
 function isWalletNotInstalledError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.toLowerCase().includes('found no installed wallet that supports the mobile wallet protocol');
+}
+
+async function signinExistingUser(): Promise<void> {
+  const { authToken, isDevnet, setWalletData, walletType, publicKeyBase58 } = useWalletStore.getState();
+  const chain = isDevnet ? 'solana:devnet' : 'solana:mainnet-beta';
+
+  if (!publicKeyBase58) {
+    throw new Error('Wallet address missing after connect');
+  }
+
+  const signResult = await transact(async (wallet: Web3MobileWallet) => {
+    const authResult = await wallet.authorize({
+      chain,
+      identity: APP_IDENTITY,
+      auth_token: authToken ?? undefined,
+    });
+
+    const message = 'Sign into mechanical turks';
+    const payload = new TextEncoder().encode(message);
+    const signatures = await wallet.signMessages({
+      addresses: [authResult.accounts[0].address],
+      payloads: [payload],
+    });
+
+    return {
+      authToken: authResult.auth_token ?? authToken ?? '',
+      signatureBase64: Buffer.from(signatures[0]).toString('base64'),
+    };
+  });
+
+  if (walletType && publicKeyBase58) {
+    setWalletData({
+      walletType,
+      publicKeyBase58,
+      authToken: signResult.authToken,
+    });
+  }
+
+  const signinResponse = await withRetry(() => requestPostJson('/user/signin', {
+    signature: signResult.signatureBase64,
+    publicKey: publicKeyBase58,
+  }), 2);
+
+  const token = signinResponse.data?.token ? String(signinResponse.data.token) : '';
+  if (!token) {
+    throw new Error('Signin succeeded but token was missing in response');
+  }
+
+  await AsyncStorage.setItem(BACKEND_TOKEN_KEY, token);
 }
 
 export default function ConnectScreen() {
@@ -52,7 +237,40 @@ export default function ConnectScreen() {
 
     try {
       await connect(selectedWallet);
-      router.replace('/setup' as any);
+
+      const { publicKeyBase58 } = useWalletStore.getState();
+      if (!publicKeyBase58) {
+        throw new Error('Wallet connected but address was not available');
+      }
+
+      let byWalletData: JsonRecord | null = null;
+      try {
+        byWalletData = await fetchByWalletWithFallback(publicKeyBase58);
+      } catch (byWalletError) {
+        if (!isNetworkFailure(byWalletError)) {
+          throw byWalletError;
+        }
+        console.log('[Connect] by-wallet check skipped due network issue, trying signin flow');
+      }
+      const exists = Boolean(byWalletData?.exists);
+      const message = String(byWalletData?.message ?? '').toLowerCase();
+
+      if (byWalletData && !exists && message === 'no user') {
+        router.replace('/setup' as any);
+        return;
+      }
+
+      try {
+        await signinExistingUser();
+        router.replace('/(tabs)/home' as any);
+      } catch (signinError) {
+        const signinMessage = signinError instanceof Error ? signinError.message.toLowerCase() : '';
+        if (!exists || signinMessage.includes('no user') || signinMessage.includes('not found')) {
+          router.replace('/setup' as any);
+          return;
+        }
+        throw signinError;
+      }
     } catch (e) {
       console.log('[Connect] Error:', e);
 
