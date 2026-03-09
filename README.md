@@ -9,6 +9,17 @@ This app supports:
 - Yield claiming flow
 - Listing draft workflow (multi-step)
 
+## PDF Preview
+
+- Open the PDF: [`aeternum.pdf`](./aeternum.pdf)
+
+<object data="./aeternum.pdf" type="application/pdf" width="100%" height="700">
+  <p>
+    Your Markdown viewer does not support inline PDF preview.
+    Open it here: <a href="./aeternum.pdf">aeternum.pdf</a>
+  </p>
+</object>
+
 ## Table Of Contents
 
 1. Overview
