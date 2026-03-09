@@ -5,22 +5,20 @@ import type { Property } from '@/types';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { ChevronRight, MapPin, Search, SlidersHorizontal, TrendingUp, Users } from 'lucide-react-native';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Dimensions,
   Image,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-const { width } = Dimensions.get('window');
-const CARD_W = width - 40;
 
 const FILTER_TYPES = ['All', 'Residential', 'Commercial', 'Industrial', 'Mixed-Use'];
 const SORT_OPTIONS = [
@@ -30,12 +28,30 @@ const SORT_OPTIONS = [
   { label: 'Price ↓', value: 'price_desc' },
 ];
 
-function PropertyCard({ property, onPress }: { property: Property; onPress: () => void }) {
-  const availPct = ((property.availableShares / property.totalShares) * 100).toFixed(0);
+function PropertyCard({
+  property,
+  cardWidth,
+  onPress,
+}: {
+  property: Property;
+  cardWidth: number;
+  onPress: () => void;
+}) {
+  const safeTotalShares = property.totalShares > 0 ? property.totalShares : 0;
+  const rawAvailablePct = safeTotalShares > 0
+    ? (property.availableShares / safeTotalShares) * 100
+    : 0;
+  const availablePct = Math.max(0, Math.min(100, Number.isFinite(rawAvailablePct) ? rawAvailablePct : 0));
+  const availablePctText = `${Math.round(availablePct)}%`;
+
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.88}>
+    <TouchableOpacity style={[styles.card, { width: cardWidth }]} onPress={onPress} activeOpacity={0.88}>
       <View style={styles.cardImageWrap}>
-        <Image source={{ uri: property.image }} style={styles.cardImage} resizeMode="cover" />
+        <Image
+          source={{ uri: property.image || 'https://images.unsplash.com/photo-1560518883-ce09059eeffa?w=800&q=80' }}
+          style={styles.cardImage}
+          resizeMode="cover"
+        />
         <LinearGradient
           colors={['transparent', 'rgba(8,9,13,0.85)']}
           style={styles.cardImageOverlay}
@@ -84,12 +100,12 @@ function PropertyCard({ property, onPress }: { property: Property; onPress: () =
         <View style={styles.progressSection}>
           <View style={styles.progressHeader}>
             <Text style={styles.progressLabel}>Available</Text>
-            <Text style={styles.progressPct}>{availPct}%</Text>
+            <Text style={styles.progressPct}>{availablePctText}</Text>
           </View>
           <View style={styles.progressBar}>
             <LinearGradient
               colors={[Colors.gold, Colors.goldDark]}
-              style={[styles.progressFill, { width: `${availPct}%` as any }]}
+              style={[styles.progressFill, { width: `${availablePct}%` }]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
             />
@@ -115,59 +131,86 @@ function PropertyCard({ property, onPress }: { property: Property; onPress: () =
 export default function ExploreScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const cardWidth = Math.max(280, width - 40);
   const [search, setSearch] = useState('');
   const [selectedType, setSelectedType] = useState('All');
   const [sortBy, setSortBy] = useState('yield');
   const [properties, setProperties] = useState<Property[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [loadError, setLoadError] = useState('');
 
-  useEffect(() => {
-    let mounted = true;
-
-    const loadProperties = async () => {
-      try {
+  const loadProperties = useCallback(async (mode: 'initial' | 'refresh' = 'initial') => {
+    try {
+      if (mode === 'initial') {
         setIsLoading(true);
-        setLoadError('');
-        const data = await fetchProperties();
-        if (mounted) {
-          setProperties(data);
-        }
-      } catch (error) {
-        if (mounted) {
-          setLoadError(error instanceof Error ? error.message : 'Unable to fetch properties');
-        }
-      } finally {
-        if (mounted) {
-          setIsLoading(false);
-        }
+      } else {
+        setIsRefreshing(true);
       }
-    };
-
-    loadProperties();
-
-    return () => {
-      mounted = false;
-    };
+      setLoadError('');
+      const data = await fetchProperties();
+      setProperties(data);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Unable to fetch properties');
+    } finally {
+      if (mode === 'initial') {
+        setIsLoading(false);
+      } else {
+        setIsRefreshing(false);
+      }
+    }
   }, []);
+
+  useEffect(() => {
+    loadProperties('initial');
+  }, [loadProperties]);
+
+  const hasActiveFilters = search.length > 0 || selectedType !== 'All' || sortBy !== 'yield';
+
+  const resetFilters = () => {
+    setSearch('');
+    setSelectedType('All');
+    setSortBy('yield');
+  };
+
+  const onRefresh = () => {
+    loadProperties('refresh');
+  };
 
   const filtered = useMemo(() => {
     let list = [...properties];
-    if (search) {
+    const normalizedSearch = search.trim().toLowerCase();
+
+    if (normalizedSearch) {
       list = list.filter(p =>
-        p.name.toLowerCase().includes(search.toLowerCase()) ||
-        p.city.toLowerCase().includes(search.toLowerCase()) ||
-        p.country.toLowerCase().includes(search.toLowerCase())
+        p.name.toLowerCase().includes(normalizedSearch)
+        || p.city.toLowerCase().includes(normalizedSearch)
+        || p.country.toLowerCase().includes(normalizedSearch)
       );
     }
+
     if (selectedType !== 'All') {
       list = list.filter(p => p.type === selectedType);
     }
+
     switch (sortBy) {
-      case 'yield': list.sort((a, b) => b.yieldPercent - a.yieldPercent); break;
-      case 'price_asc': list.sort((a, b) => a.pricePerShare - b.pricePerShare); break;
-      case 'price_desc': list.sort((a, b) => b.pricePerShare - a.pricePerShare); break;
+      case 'yield':
+        list.sort((a, b) => b.yieldPercent - a.yieldPercent);
+        break;
+      case 'newest':
+        list.sort((a, b) => (b.yearBuilt ?? 0) - (a.yearBuilt ?? 0));
+        break;
+      case 'price_asc':
+        list.sort((a, b) => a.pricePerShare - b.pricePerShare);
+        break;
+      case 'price_desc':
+        list.sort((a, b) => b.pricePerShare - a.pricePerShare);
+        break;
+      default:
+        break;
     }
+
     return list;
   }, [properties, search, selectedType, sortBy]);
 
@@ -175,11 +218,13 @@ export default function ExploreScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <LinearGradient colors={['#0D0E1A', '#08090D']} style={StyleSheet.absoluteFill} />
 
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Explore Properties</Text>
         <Text style={styles.subtitle}>{properties.length} tokenized assets worldwide</Text>
       </View>
 
+      {/* Search Row */}
       <View style={styles.searchRow}>
         <View style={styles.searchBox}>
           <Search size={16} color={Colors.textMuted} />
@@ -191,33 +236,49 @@ export default function ExploreScreen() {
             placeholderTextColor={Colors.textDisabled}
           />
         </View>
-        <TouchableOpacity style={styles.filterBtn}>
+        <TouchableOpacity
+          style={[styles.filterBtn, hasActiveFilters && styles.filterBtnActive]}
+          onPress={resetFilters}
+          activeOpacity={0.85}
+        >
           <SlidersHorizontal size={18} color={Colors.gold} />
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.typeFilterRow}
-      >
-        {FILTER_TYPES.map(t => (
-          <TouchableOpacity
-            key={t}
-            style={[styles.typeChip, selectedType === t && styles.typeChipActive]}
-            onPress={() => setSelectedType(t)}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.typeChipText, selectedType === t && styles.typeChipTextActive]}>
-              {t}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
+      {/* Type Filter Chips — fixed height scroll */}
+      <View style={styles.typeFilterWrapper}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.typeFilterRow}
+        >
+          {FILTER_TYPES.map(t => (
+            <TouchableOpacity
+              key={t}
+              style={[styles.typeChip, selectedType === t && styles.typeChipActive]}
+              onPress={() => setSelectedType(t)}
+              activeOpacity={0.8}
+            >
+              <Text
+                numberOfLines={1}
+                style={[styles.typeChipText, selectedType === t && styles.typeChipTextActive]}
+              >
+                {t}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
 
+      {/* Sort Row */}
       <View style={styles.sortRow}>
         <Text style={styles.resultCount}>{filtered.length} results</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+        <ScrollView
+          horizontal
+          style={styles.sortScroll}
+          contentContainerStyle={styles.sortScrollContent}
+          showsHorizontalScrollIndicator={false}
+        >
           {SORT_OPTIONS.map(s => (
             <TouchableOpacity
               key={s.value}
@@ -232,7 +293,18 @@ export default function ExploreScreen() {
         </ScrollView>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+      {/* Property List */}
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 24 }}
+        refreshControl={(
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={onRefresh}
+            tintColor={Colors.gold}
+          />
+        )}
+      >
         {isLoading ? (
           <View style={styles.loadingBox}>
             <ActivityIndicator color={Colors.gold} />
@@ -247,6 +319,7 @@ export default function ExploreScreen() {
             <PropertyCard
               key={p.id}
               property={p}
+              cardWidth={cardWidth}
               onPress={() => router.push(`/property/${p.id}` as any)}
             />
           ))
@@ -265,9 +338,13 @@ export default function ExploreScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+
+  // Header
   header: { paddingHorizontal: 20, paddingTop: 14, marginBottom: 16 },
   title: { fontSize: 24, fontWeight: '700' as const, color: Colors.text, marginBottom: 4 },
   subtitle: { fontSize: 13, color: Colors.textMuted },
+
+  // Search
   searchRow: {
     flexDirection: 'row',
     paddingHorizontal: 20,
@@ -297,14 +374,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.gold,
   },
+  filterBtnActive: { backgroundColor: Colors.goldGlow },
+
+  // ── TYPE FILTER FIX ──────────────────────────────────────────
+  // Wrap the ScrollView in a fixed-height View so it can NEVER
+  // bleed into content below it regardless of render timing.
+  typeFilterWrapper: {
+    height: 50,          // fixed outer height — chips are 34px + 8px vertical padding
+    marginBottom: 12,
+    justifyContent: 'center',
+  },
   typeFilterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 20,
     gap: 8,
-    marginBottom: 12,
   },
   typeChip: {
+    height: 34,           // fixed height (not min-height) so chips never grow
+    flexShrink: 0,        // never shrink/wrap
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 7,
     borderRadius: 20,
     backgroundColor: Colors.card,
     borderWidth: 1,
@@ -314,8 +405,16 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.goldGlow,
     borderColor: Colors.gold,
   },
-  typeChipText: { fontSize: 13, color: Colors.textMuted, fontWeight: '500' as const },
+  typeChipText: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    fontWeight: '500' as const,
+    lineHeight: 16,       // explicit line-height prevents text from pushing height
+  },
   typeChipTextActive: { color: Colors.gold, fontWeight: '700' as const },
+  // ─────────────────────────────────────────────────────────────
+
+  // Sort row
   sortRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -324,9 +423,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   resultCount: { fontSize: 12, color: Colors.textMuted, flexShrink: 0 },
+  sortScroll: { flex: 1 },
+  sortScrollContent: { paddingRight: 20 },
   sortChip: {
+    flexShrink: 0,
+    minWidth: 72,
+    height: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 5,
     borderRadius: 8,
     backgroundColor: Colors.card,
     marginRight: 6,
@@ -336,6 +441,8 @@ const styles = StyleSheet.create({
   sortChipActive: { backgroundColor: Colors.surface, borderColor: Colors.cyan },
   sortChipText: { fontSize: 12, color: Colors.textMuted },
   sortChipTextActive: { color: Colors.cyan, fontWeight: '600' as const },
+
+  // Property card
   card: {
     marginHorizontal: 20,
     marginBottom: 20,
@@ -346,7 +453,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cardImageWrap: { position: 'relative' },
-  cardImage: { width: CARD_W - 2, height: 200 },
+  cardImage: { width: '100%', height: 200 },
   cardImageOverlay: { ...StyleSheet.absoluteFillObject },
   yieldBadge: {
     position: 'absolute',
@@ -422,6 +529,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   investBtnText: { fontSize: 15, fontWeight: '700' as const, color: Colors.background },
+
+  // States
   loadingBox: {
     marginHorizontal: 20,
     borderRadius: 14,
@@ -442,8 +551,18 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   errorText: { fontSize: 12, color: Colors.red },
-  emptyState: { alignItems: 'center', paddingTop: 60 },
-  emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { fontSize: 18, fontWeight: '700' as const, color: Colors.text, marginBottom: 8 },
-  emptyText: { fontSize: 14, color: Colors.textMuted },
+  emptyState: {
+    marginHorizontal: 20,
+    marginTop: 8,
+    alignItems: 'center',
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 14,
+    paddingVertical: 22,
+    paddingHorizontal: 14,
+  },
+  emptyIcon: { fontSize: 34, marginBottom: 10 },
+  emptyTitle: { fontSize: 16, fontWeight: '700' as const, color: Colors.text, marginBottom: 4 },
+  emptyText: { fontSize: 13, color: Colors.textMuted, textAlign: 'center' },
 });

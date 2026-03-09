@@ -1,14 +1,13 @@
 import Colors from '@/constants/colors';
-import { MOCK_ACTIVITY, formatCurrency } from '@/mocks/data';
+import { formatCurrency } from '@/mocks/data';
 import { fetchPropertyById } from '@/services/property';
 import type { Property } from '@/types';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ArrowLeft,
-  ChevronLeft, ChevronRight, ExternalLink,
+  ChevronLeft, ChevronRight,
   MapPin,
-  Shield,
   TrendingUp
 } from 'lucide-react-native';
 import React, { useEffect, useState } from 'react';
@@ -26,14 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 
-const DOCS = [
-  { id: 'd1', name: 'Ownership Proof', icon: '📋' },
-  { id: 'd2', name: 'Valuation Report', icon: '📊' },
-  { id: 'd3', name: 'Inspection Report', icon: '🔍' },
-  { id: 'd4', name: 'Rental Agreement', icon: '📄' },
-];
-
-const TABS = ['Overview', 'Financials', 'Documents', 'Activity'];
+const TABS = ['Overview', 'Financials'];
 
 export default function PropertyDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -295,52 +287,6 @@ export default function PropertyDetailScreen() {
           </View>
         )}
 
-        {activeTab === 'Documents' && (
-          <View style={styles.tabContent}>
-            <Text style={styles.docsHint}>
-              All documents are verified and stored on-chain via IPFS
-            </Text>
-            {DOCS.map((doc) => (
-              <TouchableOpacity key={doc.id} style={styles.docCard} activeOpacity={0.8}>
-                <Text style={styles.docIcon}>{doc.icon}</Text>
-                <View style={styles.docInfo}>
-                  <Text style={styles.docName}>{doc.name}</Text>
-                  <Text style={styles.docType}>PDF Document · Verified</Text>
-                </View>
-                <View style={styles.docStatus}>
-                  <Shield size={12} color={Colors.green} />
-                  <ExternalLink size={14} color={Colors.textMuted} />
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {activeTab === 'Activity' && (
-          <View style={styles.tabContent}>
-            <Text style={styles.activityTitle}>Recent Transactions</Text>
-            {MOCK_ACTIVITY.map((item) => (
-              <View key={item.id} style={styles.activityRow}>
-                <View style={[styles.activityDot, {
-                  backgroundColor: item.type === 'investment' ? Colors.cyan
-                    : item.type === 'yield' ? Colors.green : Colors.gold,
-                }]} />
-                <View style={styles.activityInfo}>
-                  <Text style={styles.activityUser}>{item.user}</Text>
-                  <Text style={styles.activityDetail}>
-                    {item.type === 'investment' ? `Invested · ${item.shares} shares`
-                      : item.type === 'yield' ? 'Yield claimed'
-                        : `Transferred ${item.shares} shares`}
-                  </Text>
-                </View>
-                <View style={styles.activityRight}>
-                  <Text style={styles.activityAmt}>{formatCurrency(item.amount)}</Text>
-                  <Text style={styles.activityDate}>{item.date}</Text>
-                </View>
-              </View>
-            ))}
-          </View>
-        )}
       </ScrollView>
 
       <View style={[styles.buyBar, { paddingBottom: insets.bottom + 12 }]}>
@@ -521,44 +467,6 @@ const styles = StyleSheet.create({
   financeDivider: { height: 1, backgroundColor: Colors.border, marginVertical: 8 },
   financeNetLabel: { fontSize: 14, fontWeight: '700' as const, color: Colors.text },
   financeNetVal: { fontSize: 16, fontWeight: '800' as const, color: Colors.green },
-  docsHint: {
-    fontSize: 13,
-    color: Colors.textMuted,
-    marginBottom: 16,
-    lineHeight: 19,
-  },
-  docCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.card,
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    marginBottom: 10,
-    gap: 12,
-  },
-  docIcon: { fontSize: 28 },
-  docInfo: { flex: 1 },
-  docName: { fontSize: 14, fontWeight: '600' as const, color: Colors.text, marginBottom: 3 },
-  docType: { fontSize: 12, color: Colors.textMuted },
-  docStatus: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  activityTitle: { fontSize: 15, fontWeight: '700' as const, color: Colors.text, marginBottom: 14 },
-  activityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  activityDot: { width: 10, height: 10, borderRadius: 5 },
-  activityInfo: { flex: 1 },
-  activityUser: { fontSize: 12, fontWeight: '600' as const, color: Colors.text, fontFamily: 'monospace', marginBottom: 2 },
-  activityDetail: { fontSize: 12, color: Colors.textMuted },
-  activityRight: { alignItems: 'flex-end' },
-  activityAmt: { fontSize: 13, fontWeight: '700' as const, color: Colors.green, marginBottom: 2 },
-  activityDate: { fontSize: 11, color: Colors.textMuted },
   buyBar: {
     position: 'absolute',
     bottom: 0,

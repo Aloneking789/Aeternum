@@ -1,14 +1,19 @@
-import React from 'react';
-import {
-  View, Text, StyleSheet, ScrollView, TouchableOpacity, Image,
-} from 'react-native';
-import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TrendingUp, TrendingDown, Zap, ChevronRight, PlusCircle } from 'lucide-react-native';
+import Colors from '@/constants/colors';
 import { useWallet } from '@/context/WalletContext';
 import { formatCurrency } from '@/mocks/data';
-import Colors from '@/constants/colors';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
+import { ChevronRight, PlusCircle, TrendingDown, TrendingUp, Zap } from 'lucide-react-native';
+import React from 'react';
+import {
+  Image,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function InvestmentsScreen() {
   const router = useRouter();
@@ -166,13 +171,15 @@ export default function InvestmentsScreen() {
                         <Text style={styles.claimBtnText}>Claim</Text>
                       </TouchableOpacity>
                     )}
-                    <TouchableOpacity
-                      style={styles.sellBtn}
-                      onPress={() => router.push(`/sell/${inv.propertyId}` as any)}
-                      activeOpacity={0.85}
-                    >
-                      <Text style={styles.sellBtnText}>Sell</Text>
-                    </TouchableOpacity>
+                    {inv.sharesOwned > 0 && (
+                      <TouchableOpacity
+                        style={styles.sellBtn}
+                        onPress={() => router.push(`/sell/${inv.propertyId}` as any)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={styles.sellBtnText}>Sell</Text>
+                      </TouchableOpacity>
+                    )}
                   </View>
                 </View>
               </View>

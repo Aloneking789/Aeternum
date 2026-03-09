@@ -131,7 +131,7 @@ export default function ProfileScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Account</Text>
           {[
-            { label: 'Edit Profile', icon: Edit2, onPress: () => { } },
+            // { label: 'Edit Profile', icon: Edit2, onPress: () => { } },
             { label: 'Settings', icon: Settings, onPress: () => router.push('/settings' as any) },
           ].map((item) => (
             <TouchableOpacity

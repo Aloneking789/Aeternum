@@ -29,6 +29,13 @@ function emptyText(value?: string | number | null): string {
   return String(value);
 }
 
+function toNumberOrNull(value?: string | number | null): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export default function DraftDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -78,6 +85,17 @@ export default function DraftDetailScreen() {
     const fromGallery = draft.step3Data.images ?? [];
     const cover = draft.step3Data.coverImageUrl;
     return Array.from(new Set([cover, ...fromGallery].filter(Boolean))) as string[];
+  }, [draft]);
+
+  const tokenomics = useMemo(() => {
+    if (!draft?.step2Data) return null;
+    return {
+      totalValuation: toNumberOrNull(draft.step2Data.totalValuation ?? null),
+      pricePerShare: toNumberOrNull(draft.step2Data.pricePerShare ?? null),
+      totalShares: toNumberOrNull(draft.step2Data.totalShares ?? null),
+      availableShares: toNumberOrNull(draft.step2Data.availableShares ?? null),
+      yieldPercent: toNumberOrNull(draft.step2Data.yieldPercent ?? null),
+    };
   }, [draft]);
 
   const openExternal = async (url?: string) => {
@@ -181,27 +199,27 @@ export default function DraftDetailScreen() {
             <View style={styles.rowBetween}>
               <Text style={styles.rowLabel}>Total Valuation</Text>
               <Text style={styles.rowValue}>
-                {draft.step2Data?.totalValuation ? formatCurrency(draft.step2Data.totalValuation, true) : '-'}
+                {tokenomics && tokenomics.totalValuation !== null ? formatCurrency(tokenomics.totalValuation, true) : '-'}
               </Text>
             </View>
             <View style={styles.rowBetween}>
               <Text style={styles.rowLabel}>Price Per Share</Text>
               <Text style={styles.rowValue}>
-                {draft.step2Data?.pricePerShare ? formatCurrency(draft.step2Data.pricePerShare) : '-'}
+                {tokenomics && tokenomics.pricePerShare !== null ? formatCurrency(tokenomics.pricePerShare) : '-'}
               </Text>
             </View>
             <View style={styles.rowBetween}>
               <Text style={styles.rowLabel}>Total Shares</Text>
-              <Text style={styles.rowValue}>{emptyText(draft.step2Data?.totalShares)}</Text>
+              <Text style={styles.rowValue}>{tokenomics && tokenomics.totalShares !== null ? tokenomics.totalShares.toLocaleString() : '-'}</Text>
             </View>
             <View style={styles.rowBetween}>
               <Text style={styles.rowLabel}>Available Shares</Text>
-              <Text style={styles.rowValue}>{emptyText(draft.step2Data?.availableShares)}</Text>
+              <Text style={styles.rowValue}>{tokenomics && tokenomics.availableShares !== null ? tokenomics.availableShares.toLocaleString() : '-'}</Text>
             </View>
             <View style={styles.rowBetween}>
               <Text style={styles.rowLabel}>Yield</Text>
               <Text style={styles.rowValue}>
-                {draft.step2Data?.yieldPercent ? `${draft.step2Data.yieldPercent}% APY` : '-'}
+                {tokenomics && tokenomics.yieldPercent !== null ? `${tokenomics.yieldPercent}% APY` : '-'}
               </Text>
             </View>
           </View>

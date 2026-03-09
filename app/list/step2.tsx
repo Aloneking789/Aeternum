@@ -26,6 +26,12 @@ export default function ListStep2Screen() {
   const [pricePerShare, setPricePerShare] = useState('');
   const [minInvestment, setMinInvestment] = useState('');
   const [projectedYield, setProjectedYield] = useState('');
+  const [monthlyRental, setMonthlyRental] = useState('');
+  const [operatingCosts, setOperatingCosts] = useState('');
+  const [managementFeePct, setManagementFeePct] = useState('');
+  const [insuranceCost, setInsuranceCost] = useState('');
+  const [capRate, setCapRate] = useState('');
+  const [occupancyPct, setOccupancyPct] = useState('');
   const [distribution, setDistribution] = useState('Monthly');
   const [lockupPeriod, setLockupPeriod] = useState('');
   const [governanceEnabled, setGovernanceEnabled] = useState(false);
@@ -43,7 +49,10 @@ export default function ListStep2Screen() {
   }, [tokenizationAmount, totalShares]);
 
   const canContinue = tokenizationAmount !== '' && totalShares !== ''
-    && pricePerShare !== '' && projectedYield !== '' && minInvestment !== '';
+    && pricePerShare !== '' && projectedYield !== ''
+    && monthlyRental !== '' && operatingCosts !== ''
+    && managementFeePct !== '' && insuranceCost !== ''
+    && capRate !== '' && occupancyPct !== '';
 
   const handleContinue = async () => {
     if (!canContinue || isSaving) return;
@@ -57,12 +66,18 @@ export default function ListStep2Screen() {
     const parsedTotalShares = Number(totalShares) || 0;
 
     const tokenomicsPayload = {
-      tokenModel: 'fractional',
-      totalValuation: Number(tokenizationAmount) || 0,
+      tokenModel: 'spl',
+      totalValuation: tokenizationAmount || '0',
       pricePerShare: Number(pricePerShare) || 0,
       totalShares: parsedTotalShares,
       availableShares: parsedTotalShares,
       yieldPercent: Number(projectedYield) || 0,
+      monthlyRental: monthlyRental || '0',
+      operatingCosts: operatingCosts || '0',
+      managementFeePct: Number(managementFeePct) || 0,
+      insuranceCost: insuranceCost || '0',
+      capRate: Number(capRate) || 0,
+      occupancyPct: Number(occupancyPct) || 0,
     };
 
 
@@ -201,6 +216,96 @@ export default function ListStep2Screen() {
                   <Text style={[styles.distOptionText, distribution === opt && styles.distOptionTextActive]}>{opt}</Text>
                 </TouchableOpacity>
               ))}
+            </View>
+          </View>
+
+          <View style={[styles.inputGroup, { marginTop: 10 }]}>
+            <View style={styles.inputIcon}><DollarSign size={16} color={Colors.green} /></View>
+            <View style={styles.inputFlex}>
+              <Text style={styles.inputLabel}>Monthly Rental (USD) *</Text>
+              <TextInput
+                style={styles.input}
+                value={monthlyRental}
+                onChangeText={setMonthlyRental}
+                placeholder="e.g. 250000"
+                placeholderTextColor={Colors.textDisabled}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          <View style={[styles.inputGroup, { marginTop: 10 }]}>
+            <View style={styles.inputIcon}><DollarSign size={16} color={Colors.red} /></View>
+            <View style={styles.inputFlex}>
+              <Text style={styles.inputLabel}>Operating Costs (USD) *</Text>
+              <TextInput
+                style={styles.input}
+                value={operatingCosts}
+                onChangeText={setOperatingCosts}
+                placeholder="e.g. 35000"
+                placeholderTextColor={Colors.textDisabled}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          <View style={[styles.inputGroup, { marginTop: 10 }]}>
+            <View style={styles.inputIcon}><Percent size={16} color={Colors.cyan} /></View>
+            <View style={styles.inputFlex}>
+              <Text style={styles.inputLabel}>Management Fee (%) *</Text>
+              <TextInput
+                style={styles.input}
+                value={managementFeePct}
+                onChangeText={setManagementFeePct}
+                placeholder="e.g. 2"
+                placeholderTextColor={Colors.textDisabled}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          <View style={[styles.inputGroup, { marginTop: 10 }]}>
+            <View style={styles.inputIcon}><DollarSign size={16} color={Colors.purple} /></View>
+            <View style={styles.inputFlex}>
+              <Text style={styles.inputLabel}>Insurance Cost (USD) *</Text>
+              <TextInput
+                style={styles.input}
+                value={insuranceCost}
+                onChangeText={setInsuranceCost}
+                placeholder="e.g. 5000"
+                placeholderTextColor={Colors.textDisabled}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          <View style={[styles.inputGroup, { marginTop: 10 }]}>
+            <View style={styles.inputIcon}><Percent size={16} color={Colors.gold} /></View>
+            <View style={styles.inputFlex}>
+              <Text style={styles.inputLabel}>Cap Rate (%) *</Text>
+              <TextInput
+                style={styles.input}
+                value={capRate}
+                onChangeText={setCapRate}
+                placeholder="e.g. 7.2"
+                placeholderTextColor={Colors.textDisabled}
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+
+          <View style={[styles.inputGroup, { marginTop: 10 }]}>
+            <View style={styles.inputIcon}><Percent size={16} color={Colors.green} /></View>
+            <View style={styles.inputFlex}>
+              <Text style={styles.inputLabel}>Occupancy (%) *</Text>
+              <TextInput
+                style={styles.input}
+                value={occupancyPct}
+                onChangeText={setOccupancyPct}
+                placeholder="e.g. 95"
+                placeholderTextColor={Colors.textDisabled}
+                keyboardType="numeric"
+              />
             </View>
           </View>
         </View>

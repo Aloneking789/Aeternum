@@ -193,7 +193,7 @@ function mapBackendListing(item: BackendProperty): Listing {
 
 export async function fetchProperties(
   page = 1,
-  limit = 50,
+  limit = 5000,
 ): Promise<Property[]> {
   const response = await apiRequest<PropertiesResponse>(
     `/property/properties?page=${page}&limit=${limit}`,

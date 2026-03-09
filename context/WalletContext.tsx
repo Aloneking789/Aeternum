@@ -1,6 +1,12 @@
 import { MOCK_USER } from '@/mocks/data';
 import { fetchMyInvestments } from '@/services/investments';
 import { fetchUserProfile } from '@/services/userProfile';
+import {
+  confirmYieldClaim,
+  fetchClaimableYield,
+  initiateYieldClaim,
+  type YieldClaimRequestItem,
+} from '@/services/yield';
 import { useWalletStore, WalletType } from '@/stores/wallet-store';
 import type { Investment, Listing, UserProfile } from '@/types';
 import createContextHook from '@nkzw/create-context-hook';
@@ -9,8 +15,14 @@ import {
   transact,
   Web3MobileWallet,
 } from '@solana-mobile/mobile-wallet-adapter-protocol-web3js';
-import { PublicKey } from '@solana/web3.js';
+import {
+  clusterApiUrl,
+  Connection,
+  PublicKey,
+  VersionedTransaction,
+} from '@solana/web3.js';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import bs58 from 'bs58';
 import { Buffer } from 'buffer';
 import { useEffect, useState } from 'react';
 
@@ -24,6 +36,54 @@ const STORAGE_KEYS = {
   WALLET: 'aeturnum_wallet',
   PROFILE: 'aeturnum_profile',
 };
+
+async function sendAndConfirmWithFallback(
+  serializedTx: Uint8Array,
+  isDevnet: boolean,
+): Promise<string> {
+  const devnetFallbacks = (process.env.EXPO_PUBLIC_SOLANA_DEVNET_RPC_FALLBACKS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const mainnetFallbacks = (process.env.EXPO_PUBLIC_SOLANA_MAINNET_RPC_FALLBACKS ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const endpoints = isDevnet
+    ? [
+      process.env.EXPO_PUBLIC_SOLANA_DEVNET_RPC_URL?.trim(),
+      ...devnetFallbacks,
+      clusterApiUrl('devnet'),
+      'https://api.devnet.solana.com',
+    ]
+    : [
+      process.env.EXPO_PUBLIC_SOLANA_MAINNET_RPC_URL?.trim(),
+      ...mainnetFallbacks,
+      clusterApiUrl('mainnet-beta'),
+      'https://api.mainnet-beta.solana.com',
+    ];
+
+  const uniqueEndpoints = Array.from(new Set(endpoints.filter((endpoint): endpoint is string => !!endpoint)));
+
+  for (const endpoint of uniqueEndpoints) {
+    try {
+      const connection = new Connection(endpoint, 'confirmed');
+      const signature = await connection.sendRawTransaction(serializedTx, {
+        skipPreflight: false,
+        maxRetries: 3,
+      });
+
+      await connection.confirmTransaction(signature, 'confirmed');
+      return signature;
+    } catch {
+      // Continue trying fallback RPC endpoints.
+    }
+  }
+
+  throw new Error('Unable to broadcast claim transaction to Solana RPC endpoints.');
+}
 
 export const [WalletProvider, useWallet] = createContextHook(() => {
   const queryClient = useQueryClient();
@@ -185,18 +245,102 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
       queryClient.invalidateQueries({ queryKey: ['wallet_session'] });
       queryClient.invalidateQueries({ queryKey: ['user_profile'] });
       queryClient.invalidateQueries({ queryKey: ['investments_me'] });
+      queryClient.invalidateQueries({ queryKey: ['yield_claimable'] });
     },
   });
 
+  const claimableYieldQuery = useQuery({
+    queryKey: ['yield_claimable', publicKeyBase58],
+    queryFn: async () => fetchClaimableYield(publicKeyBase58 ?? ''),
+    enabled: isConnected && !!publicKeyBase58,
+    retry: 1,
+  });
+
   const claimYieldMutation = useMutation({
-    mutationFn: async (amount: number) => {
-      console.log('[WalletContext] Claiming yield:', amount);
-      await new Promise(r => setTimeout(r, 2000));
-      return amount;
+    mutationFn: async (_amount: number) => {
+      if (!publicKeyBase58) {
+        throw new Error('Wallet not connected');
+      }
+
+      const latestClaimable = await fetchClaimableYield(publicKeyBase58);
+      if (latestClaimable.claims.length === 0 || latestClaimable.totalClaimable <= 0) {
+        return 0;
+      }
+
+      const initiated = await initiateYieldClaim({
+        walletAddress: publicKeyBase58,
+        claims: latestClaimable.claims,
+      });
+
+      const signature = await transact(async (wallet: Web3MobileWallet) => {
+        const walletState = useWalletStore.getState();
+        const chain = walletState.isDevnet ? 'solana:devnet' : 'solana:mainnet-beta';
+
+        const authResult = await wallet.authorize({
+          chain,
+          identity: APP_IDENTITY,
+          auth_token: walletState.authToken ?? undefined,
+        });
+
+        if (walletState.walletType && walletState.publicKeyBase58) {
+          walletState.setWalletData({
+            walletType: walletState.walletType,
+            publicKeyBase58: walletState.publicKeyBase58,
+            authToken: authResult.auth_token ?? walletState.authToken ?? '',
+          });
+        }
+
+        const unsignedTxBytes = Buffer.from(initiated.unsignedTx, 'base64');
+        const unsignedTx = VersionedTransaction.deserialize(unsignedTxBytes);
+
+        const maybeSignAndSend = (
+          wallet as unknown as {
+            signAndSendTransactions?: (args: { transactions: VersionedTransaction[] }) => Promise<{ signatures: Array<string | Uint8Array> }>;
+          }
+        ).signAndSendTransactions;
+
+        if (typeof maybeSignAndSend === 'function') {
+          const walletSendResult = await maybeSignAndSend({ transactions: [unsignedTx] });
+          const walletSig = Array.isArray(walletSendResult)
+            ? walletSendResult[0]
+            : walletSendResult?.signatures?.[0];
+
+          if (typeof walletSig === 'string' && walletSig.length > 0) {
+            return walletSig;
+          }
+
+          if (walletSig instanceof Uint8Array && walletSig.length > 0) {
+            return bs58.encode(walletSig);
+          }
+
+          const txSignatureBytes = unsignedTx.signatures?.[0];
+          if (txSignatureBytes instanceof Uint8Array && txSignatureBytes.some((b) => b !== 0)) {
+            return bs58.encode(txSignatureBytes);
+          }
+
+          throw new Error('Wallet submitted claim transaction but did not return signature.');
+        }
+
+        const signedTxs = await wallet.signTransactions({ transactions: [unsignedTx] });
+        if (!signedTxs?.[0]) {
+          throw new Error('Wallet returned no signed transaction for claim');
+        }
+
+        return sendAndConfirmWithFallback(signedTxs[0].serialize(), walletState.isDevnet);
+      });
+
+      const confirmPayload: { txSignature: string; claims: YieldClaimRequestItem[] } = {
+        txSignature: signature,
+        claims: latestClaimable.claims,
+      };
+
+      const confirmResponse = await confirmYieldClaim(confirmPayload);
+      return confirmResponse.totalClaimed;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user_profile'] });
       queryClient.invalidateQueries({ queryKey: ['investments_me'] });
+      queryClient.invalidateQueries({ queryKey: ['yield_claimable'] });
     },
   });
 
@@ -220,7 +364,8 @@ export const [WalletProvider, useWallet] = createContextHook(() => {
     ?? investments.reduce((sum, inv) => sum + inv.purchasePrice, 0);
   const totalYieldEarned = investmentsSummaryQuery.data?.totals.totalYieldEarned
     ?? investments.reduce((sum, inv) => sum + inv.yieldEarned, 0);
-  const totalClaimable = investmentsSummaryQuery.data?.totals.totalClaimableYield
+  const totalClaimable = claimableYieldQuery.data?.totalClaimable
+    ?? investmentsSummaryQuery.data?.totals.totalClaimableYield
     ?? investments.reduce((sum, inv) => sum + inv.claimableYield, 0);
   const overallROI = totalInvested > 0
     ? ((totalPortfolioValue + totalYieldEarned - totalInvested) / totalInvested) * 100

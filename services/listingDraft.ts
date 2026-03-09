@@ -13,11 +13,17 @@ export type ListingBasicInfoPayload = {
 
 export type ListingTokenomicsPayload = {
   tokenModel: string;
-  totalValuation: number;
+  totalValuation: number | string;
   pricePerShare: number;
   totalShares: number;
   availableShares: number;
   yieldPercent: number;
+  monthlyRental: number | string;
+  operatingCosts: number | string;
+  managementFeePct: number;
+  insuranceCost: number | string;
+  capRate: number;
+  occupancyPct: number;
 };
 
 export type ListingMediaUploadsPayload = {
@@ -116,8 +122,14 @@ type DraftStep2Data = {
   totalShares?: number;
   yieldPercent?: number;
   pricePerShare?: number;
-  totalValuation?: number;
+  totalValuation?: number | string;
   availableShares?: number;
+  monthlyRental?: number | string | null;
+  operatingCosts?: number | string | null;
+  managementFeePct?: number | null;
+  insuranceCost?: number | string | null;
+  capRate?: number | null;
+  occupancyPct?: number | null;
 };
 
 type DraftStep3Data = {
