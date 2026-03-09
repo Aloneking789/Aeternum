@@ -39,6 +39,14 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": "https://aeternum.com/"
+      },
+      "eas": {
+        "projectId": "c09ed8c3-ed50-43aa-ae03-a03fe41a0f17"
+      }
     }
   }
 }
